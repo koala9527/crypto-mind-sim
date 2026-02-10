@@ -1,0 +1,2256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CryptoMindSim - 加密货币模拟交易平台</title>
+    <meta name="description" content="基于AI的加密货币模拟交易平台，安全学习数字货币交易策略">
+    <meta name="keywords" content="加密货币,模拟交易,AI交易,比特币,区块链">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/i18n.js"></script>
+    <style>
+        /* 日间模式 - OKX 风格 */
+        :root {
+            --bg-primary: #f5f5f5;
+            --bg-secondary: #ffffff;
+            --bg-card: #ffffff;
+            --text-primary: #000000;
+            --text-secondary: #76808f;
+            --border-color: #eaecef;
+            --shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+            --shadow-lg: 0 2px 8px 0 rgba(0, 0, 0, 0.08);
+            --accent: #000000;
+            --accent-hover: #333333;
+            --success: #0ecb81;
+            --danger: #f6465d;
+            --warning: #ffa800;
+            --chart-grid: rgba(0, 0, 0, 0.05);
+            --chart-text: #76808f;
+        }
+
+        /* 夜间模式 - OKX 风格 */
+        [data-theme="dark"] {
+            --bg-primary: #0b0e11;
+            --bg-secondary: #1a1e23;
+            --bg-card: #1a1e23;
+            --text-primary: #eaecef;
+            --text-secondary: #76808f;
+            --border-color: #2b3139;
+            --shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+            --shadow-lg: 0 2px 8px 0 rgba(0, 0, 0, 0.5);
+            --accent: #eaecef;
+            --accent-hover: #ffffff;
+            --success: #0ecb81;
+            --danger: #f6465d;
+            --warning: #ffa800;
+            --chart-grid: rgba(255, 255, 255, 0.05);
+            --chart-text: #76808f;
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        .card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow);
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            box-shadow: var(--shadow-lg);
+        }
+
+        .btn-primary {
+            background-color: var(--accent);
+            color: white;
+            transition: background-color 0.2s ease;
+        }
+
+        [data-theme="dark"] .btn-primary {
+            color: #000000;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--accent-hover);
+        }
+
+        .profit { color: var(--success); }
+        .loss { color: var(--danger); }
+
+        .theme-toggle {
+            cursor: pointer;
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            transition: all 0.2s ease;
+        }
+
+        .theme-toggle:hover {
+            transform: scale(1.1);
+        }
+
+        .input-field {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            transition: border-color 0.2s ease;
+        }
+
+        .input-field:focus {
+            outline: none;
+            border-color: var(--text-primary);
+        }
+
+        /* 标签页样式 */
+        .tab-button {
+            padding: 0.5rem 1rem;
+            border-bottom: 2px solid transparent;
+            color: var(--text-secondary);
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+
+        .tab-button:hover {
+            color: var(--text-primary);
+        }
+
+        .tab-button.active {
+            color: var(--text-primary);
+            border-bottom-color: var(--text-primary);
+        }
+
+        .badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .badge-success {
+            background-color: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+        }
+
+        .badge-danger {
+            background-color: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+        }
+
+        .badge-warning {
+            background-color: rgba(245, 158, 11, 0.1);
+            color: var(--warning);
+        }
+
+        .badge-info {
+            background-color: rgba(0, 0, 0, 0.05);
+            color: var(--text-primary);
+        }
+
+        [data-theme="dark"] .badge-info {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        /* 自定义通知样式 */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .toast {
+            min-width: 300px;
+            padding: 1rem 1.25rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            animation: slideIn 0.3s ease-out;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+        }
+
+        .toast.success {
+            border-left: 4px solid var(--success);
+        }
+
+        .toast.error {
+            border-left: 4px solid var(--danger);
+        }
+
+        .toast.info {
+            border-left: 4px solid var(--text-primary);
+        }
+
+        .toast.warning {
+            border-left: 4px solid var(--warning);
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+        }
+
+        .toast.hiding {
+            animation: slideOut 0.3s ease-out forwards;
+        }
+
+        .toast-icon {
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .toast-content {
+            flex: 1;
+        }
+
+        .toast-title {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .toast-message {
+            font-size: 0.875rem;
+            opacity: 0.8;
+        }
+
+        .toast-close {
+            cursor: pointer;
+            font-size: 1.25rem;
+            opacity: 0.5;
+            transition: opacity 0.2s;
+        }
+
+        .toast-close:hover {
+            opacity: 1;
+        }
+
+        /* 模态框通用样式 */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            animation: fadeIn 0.2s ease-out forwards;
+        }
+
+        .modal-content {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 0.75rem;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            animation: slideUp 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        /* 页脚样式 */
+        footer {
+            margin-top: 4rem;
+            padding: 2rem 0;
+            border-top: 1px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+
+        footer a {
+            color: var(--text-secondary);
+            transition: color 0.2s;
+        }
+
+        footer a:hover {
+            color: var(--text-primary);
+        }
+
+        /* 帮助按钮悬浮组 */
+        .help-fab {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            z-index: 999;
+        }
+
+        .help-btn {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 1.5rem;
+        }
+
+        .help-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+        }
+
+        .help-btn-main {
+            width: 64px;
+            height: 64px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        /* FAQ 折叠面板 */
+        .faq-item {
+            border-bottom: 1px solid var(--border-color);
+            padding: 1rem 0;
+        }
+
+        .faq-question {
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 600;
+            padding: 0.5rem 0;
+            transition: color 0.2s;
+        }
+
+        .faq-question:hover {
+            color: var(--text-primary);
+        }
+
+        .faq-answer {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+            color: var(--text-secondary);
+            padding-top: 0;
+        }
+
+        .faq-answer.active {
+            max-height: 500px;
+            padding-top: 0.5rem;
+        }
+
+        .faq-icon {
+            transition: transform 0.3s;
+        }
+
+        .faq-icon.active {
+            transform: rotate(180deg);
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+    <!-- 通知容器 -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <div class="container mx-auto px-4 py-6">
+        <!-- 头部 -->
+        <header class="mb-8 flex justify-between items-center">
+            <div>
+                <h1 class="text-3xl font-bold" style="color: var(--text-primary);" data-i18n="title">
+                    📊 CryptoMindSim
+                </h1>
+                <p class="text-sm" style="color: var(--text-secondary);" data-i18n="subtitle">
+                    加密货币智能交易模拟平台 · 初始资金 10,000 USDT
+                </p>
+            </div>
+            <!-- 右上角操作栏 -->
+            <div class="flex items-center gap-3">
+                <!-- 主题切换按钮 -->
+                <div class="theme-toggle" onclick="toggleTheme()">
+                    <span id="themeIcon">🌙</span>
+                </div>
+                <!-- 设置按钮 -->
+                <div class="theme-toggle" onclick="showSettingsModal()" title="设置">
+                    <span>⚙️</span>
+                </div>
+                <!-- 登录/用户信息 -->
+                <div id="userArea">
+                    <button onclick="showLoginModal()" class="btn-primary px-4 py-2 rounded font-semibold" data-i18n="login">
+                        登录
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- 登录/注册模态框 -->
+        <div id="loginModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="card rounded-lg p-6 max-w-md w-full mx-4">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-bold" id="modalTitle">登录</h2>
+                    <button onclick="hideLoginModal()" class="text-2xl" style="color: var(--text-secondary)">&times;</button>
+                </div>
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm mb-2" style="color: var(--text-secondary)">用户名</label>
+                        <input
+                            type="text"
+                            id="modalUsername"
+                            placeholder="请输入用户名"
+                            class="w-full input-field rounded px-4 py-2"
+                        >
+                    </div>
+                    <div>
+                        <label class="block text-sm mb-2" style="color: var(--text-secondary)">密码</label>
+                        <input
+                            type="password"
+                            id="modalPassword"
+                            placeholder="请输入密码"
+                            class="w-full input-field rounded px-4 py-2"
+                        >
+                    </div>
+                    <button id="loginBtn" onclick="handleLogin()" class="w-full btn-primary py-3 rounded font-semibold">
+                        登录
+                    </button>
+                    <div class="text-center text-sm" style="color: var(--text-secondary)">
+                        <span id="switchText">还没有账号？</span>
+                        <button onclick="switchMode()" class="font-semibold" style="color: var(--text-primary)" id="switchBtn">
+                            立即注册
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 设置模态框 -->
+        <div id="settingsModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="card rounded-lg p-6 max-w-md w-full mx-4">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-bold">AI 配置</h2>
+                    <button onclick="hideSettingsModal()" class="text-2xl" style="color: var(--text-secondary)">&times;</button>
+                </div>
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">
+                            🔑 API Key
+                        </label>
+                        <input
+                            type="password"
+                            id="apiKeyInput"
+                            placeholder="sk-xxxxxxxxxxxxxxxx"
+                            class="w-full input-field rounded px-4 py-2"
+                        >
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">
+                            API Key 将保存在浏览器本地，不会上传到服务器
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">
+                            🌐 Base URL（可选）
+                        </label>
+                        <input
+                            type="text"
+                            id="baseUrlInput"
+                            placeholder="https://api.hodlai.fun/v1"
+                            class="w-full input-field rounded px-4 py-2"
+                            value="https://api.hodlai.fun/v1"
+                        >
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">
+                            默认使用 https://api.hodlai.fun/v1
+                        </div>
+                    </div>
+
+                    <div class="bg-yellow-500 bg-opacity-10 border border-yellow-500 border-opacity-30 rounded p-3">
+                        <div class="text-sm" style="color: var(--warning)">
+                            <strong>⚠️ 安全提示</strong>
+                            <ul class="mt-2 space-y-1 text-xs" style="color: var(--text-secondary)">
+                                <li>• 请妥善保管您的 API Key</li>
+                                <li>• 建议使用权限受限的 API Key</li>
+                                <li>• 定期更换 API Key 以提高安全性</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <button onclick="saveSettings()" class="w-full btn-primary py-3 rounded font-semibold">
+                        保存配置
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 创建/编辑策略模态框 -->
+        <div id="strategyModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" style="overflow-y: auto;">
+            <div class="card rounded-lg p-6 max-w-2xl w-full mx-4 my-8">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-bold" id="strategyModalTitle">创建策略</h2>
+                    <button onclick="hideStrategyModal()" class="text-2xl" style="color: var(--text-secondary)">&times;</button>
+                </div>
+
+                <div class="space-y-4">
+                    <input type="hidden" id="editingStrategyId" value="">
+
+                    <!-- 预设策略模板 -->
+                    <div id="presetStrategySection">
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">
+                            📋 预设策略模板（可选）
+                        </label>
+                        <select id="presetStrategy" class="w-full input-field rounded px-4 py-2" onchange="loadPresetStrategy()">
+                            <option value="">-- 选择预设策略模板 --</option>
+                        </select>
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">选择预设模板后可以根据需要修改</div>
+                    </div>
+
+                    <!-- 策略名称 -->
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">策略名称</label>
+                        <input
+                            type="text"
+                            id="strategyName"
+                            placeholder="例如：BTC激进策略"
+                            class="w-full input-field rounded px-4 py-2"
+                            maxlength="100"
+                        >
+                    </div>
+
+                    <!-- 交易对选择 -->
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">交易对</label>
+                        <select id="strategySymbol" class="w-full input-field rounded px-4 py-2">
+                            <option value="">加载中...</option>
+                        </select>
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">选择您要交易的币种</div>
+                    </div>
+
+                    <!-- AI 模型选择 -->
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">AI 模型</label>
+                        <select id="strategyModel" class="w-full input-field rounded px-4 py-2">
+                            <option value="">加载中...</option>
+                        </select>
+                    </div>
+
+                    <!-- 执行频率 -->
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">
+                            执行频率（秒）
+                        </label>
+                        <input
+                            type="number"
+                            id="strategyInterval"
+                            placeholder="60"
+                            min="60"
+                            step="60"
+                            class="w-full input-field rounded px-4 py-2"
+                        >
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">最小60秒（1分钟），建议300秒（5分钟）</div>
+                    </div>
+
+                    <!-- 策略描述 -->
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">策略描述（可选）</label>
+                        <input
+                            type="text"
+                            id="strategyDescription"
+                            placeholder="简要说明策略的目标和特点"
+                            class="w-full input-field rounded px-4 py-2"
+                        >
+                    </div>
+
+                    <!-- AI 提示词 -->
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">AI 提示词</label>
+                        <textarea
+                            id="strategyPrompt"
+                            rows="8"
+                            placeholder="你是一个专业的加密货币交易员。请根据市场数据分析并给出交易建议...
+
+示例：
+- 保守策略：只在明确趋势中交易，杠杆不超过2倍，优先风险控制
+- 激进策略：快速捕捉市场波动，可使用5-10倍杠杆，追求高收益
+- 技术分析：基于价格走势、支撑位、阻力位进行分析"
+                            class="w-full input-field rounded px-4 py-2"
+                            style="resize: vertical; min-height: 150px;"
+                        ></textarea>
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">定义AI的交易风格和决策逻辑</div>
+                    </div>
+
+                    <!-- 按钮组 -->
+                    <div class="flex gap-3 pt-2">
+                        <button onclick="hideStrategyModal()" class="flex-1 px-4 py-2.5 rounded font-semibold" style="background-color: var(--bg-secondary); color: var(--text-secondary);">
+                            取消
+                        </button>
+                        <button id="saveStrategyBtn" onclick="saveStrategy()" class="flex-1 btn-primary py-2.5 rounded font-semibold">
+                            保存策略
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 项目介绍模态框 -->
+        <div id="aboutModal" class="modal-overlay hidden" onclick="if(event.target === this) hideAboutModal()">
+            <div class="modal-content w-full mx-4" onclick="event.stopPropagation()">
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold">📊 关于 CryptoMindSim</h2>
+                        <button onclick="hideAboutModal()" class="text-3xl" style="color: var(--text-secondary)">&times;</button>
+                    </div>
+
+                    <div class="space-y-4" style="color: var(--text-secondary)">
+                        <section>
+                            <h3 class="text-lg font-semibold mb-2" style="color: var(--text-primary)">✨ 项目简介</h3>
+                            <p>CryptoMindSim 是一个基于人工智能的加密货币模拟交易平台，旨在为用户提供零风险的交易学习环境。通过模拟真实市场行情，结合AI智能决策系统，帮助用户深入理解数字货币交易机制。</p>
+                        </section>
+
+                        <section>
+                            <h3 class="text-lg font-semibold mb-2" style="color: var(--text-primary)">🎯 核心功能</h3>
+                            <ul class="space-y-2 ml-4">
+                                <li>• <strong>实时行情模拟</strong> - 基于真实交易所数据</li>
+                                <li>• <strong>杠杆交易体验</strong> - 支持1-20倍杠杆</li>
+                                <li>• <strong>AI智能策略</strong> - 可配置多种AI交易策略</li>
+                                <li>• <strong>全球排行榜</strong> - 与其他用户竞技交易能力</li>
+                                <li>• <strong>完整交易记录</strong> - 持仓管理与历史追溯</li>
+                                <li>• <strong>风险控制系统</strong> - 自动爆仓保护机制</li>
+                            </ul>
+                        </section>
+
+                        <section>
+                            <h3 class="text-lg font-semibold mb-2" style="color: var(--text-primary)">🛡️ 安全保障</h3>
+                            <p>本平台为<strong>纯模拟环境</strong>，不涉及任何真实资金交易。所有交易均为虚拟操作，用户可以放心学习和实验各种交易策略，无需担心资金损失。</p>
+                        </section>
+
+                        <section>
+                            <h3 class="text-lg font-semibold mb-2" style="color: var(--text-primary)">🚀 技术栈</h3>
+                            <div class="grid grid-cols-2 gap-2 text-sm">
+                                <div>• 后端：FastAPI + Python</div>
+                                <div>• 前端：Tailwind CSS + Chart.js</div>
+                                <div>• 数据库：SQLite + SQLAlchemy</div>
+                                <div>• 行情：CCXT 统一接口</div>
+                                <div>• AI：Claude API 决策引擎</div>
+                                <div>• 部署：Docker 容器化</div>
+                            </div>
+                        </section>
+
+                        <section class="text-center pt-4">
+                            <p class="text-sm">版本 v1.0.0 | © 2024 CryptoMindSim | 仅供学习交流使用</p>
+                        </section>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 使用说明模态框 -->
+        <div id="guideModal" class="modal-overlay hidden" onclick="if(event.target === this) hideGuideModal()">
+            <div class="modal-content w-full mx-4" onclick="event.stopPropagation()">
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold">📖 使用说明</h2>
+                        <button onclick="hideGuideModal()" class="text-3xl" style="color: var(--text-secondary)">&times;</button>
+                    </div>
+
+                    <div class="space-y-6" style="color: var(--text-secondary)">
+                        <section>
+                            <h3 class="text-lg font-semibold mb-3 flex items-center gap-2" style="color: var(--text-primary)">
+                                <span class="badge badge-info">1</span> 注册与登录
+                            </h3>
+                            <ul class="space-y-2 ml-8">
+                                <li>• 点击右上角"登录"按钮</li>
+                                <li>• 输入用户名和密码（首次使用自动注册）</li>
+                                <li>• 新用户将自动获得 <strong>10,000 USDT</strong> 模拟资金</li>
+                            </ul>
+                        </section>
+
+                        <section>
+                            <h3 class="text-lg font-semibold mb-3 flex items-center gap-2" style="color: var(--text-primary)">
+                                <span class="badge badge-info">2</span> AI 决策系统
+                            </h3>
+                            <ul class="space-y-2 ml-8">
+                                <li>• 在"AI决策"标签页查看市场分析</li>
+                                <li>• 选择并激活AI策略配置</li>
+                                <li>• 点击"运行分析"获取AI建议</li>
+                                <li>• 可选择"执行AI交易"自动交易</li>
+                            </ul>
+                        </section>
+
+                        <section>
+                            <h3 class="text-lg font-semibold mb-3 flex items-center gap-2" style="color: var(--text-primary)">
+                                <span class="badge badge-info">3</span> 风险提示
+                            </h3>
+                            <div class="bg-red-500 bg-opacity-10 border border-red-500 rounded p-3">
+                                <p class="font-semibold" style="color: var(--danger)">⚠️ 重要提示</p>
+                                <ul class="mt-2 space-y-1 text-sm">
+                                    <li>• 当持仓亏损达到保证金的 90% 时将触发<strong>强制平仓</strong></li>
+                                    <li>• 高杠杆会放大盈利，同时也会放大亏损</li>
+                                    <li>• 合理分配资金，不要孤注一掷</li>
+                                    <li>• 设置止损点位，控制风险敞口</li>
+                                </ul>
+                            </div>
+                        </section>
+
+                        <section>
+                            <h3 class="text-lg font-semibold mb-3 flex items-center gap-2" style="color: var(--text-primary)">
+                                <span class="badge badge-info">4</span> 排行榜与统计
+                            </h3>
+                            <ul class="space-y-2 ml-8">
+                                <li>• 右侧排行榜显示全平台收益率排名</li>
+                                <li>• ROI（收益率）= (当前总资产 - 初始资金) / 初始资金 × 100%</li>
+                                <li>• 总资产 = 账户余额 + 持仓价值</li>
+                                <li>• 系统统计显示平台实时数据</li>
+                            </ul>
+                        </section>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 常见问题模态框 -->
+        <div id="faqModal" class="modal-overlay hidden" onclick="if(event.target === this) hideFaqModal()">
+            <div class="modal-content w-full mx-4" onclick="event.stopPropagation()">
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold">❓ 常见问题</h2>
+                        <button onclick="hideFaqModal()" class="text-3xl" style="color: var(--text-secondary)">&times;</button>
+                    </div>
+
+                    <div class="space-y-1">
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(0)">
+                                <span>这个平台是真实交易吗？</span>
+                                <span class="faq-icon" id="faq-icon-0">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-0">
+                                <p>不是。CryptoMindSim 是一个<strong>100% 模拟交易平台</strong>，所有交易均为虚拟操作，不涉及任何真实资金。行情数据虽然基于真实交易所，但所有交易行为都在本地数据库中进行，完全无风险。</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-item">
+
+        <!-- 交易详情模态框 -->
+        <div id="tradeDetailModal" class="modal-overlay hidden" onclick="if(event.target === this) hideTradeDetail()">
+            <div class="modal-content w-full max-w-4xl mx-4" onclick="event.stopPropagation()" style="max-height: 90vh; overflow-y: auto;">
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold">📊 交易详情</h2>
+                        <button onclick="hideTradeDetail()" class="text-3xl" style="color: var(--text-secondary)">&times;</button>
+                    </div>
+                    <div id="tradeDetailContent">
+                        <!-- 内容将通过 JS 动态加载 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 常见问题模态框 -->
+        <div id="faqModal" class="modal-overlay hidden" onclick="if(event.target === this) hideFaqModal()">
+            <div class="modal-content w-full mx-4" onclick="event.stopPropagation()">
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold">❓ 常见问题</h2>
+                        <button onclick="hideFaqModal()" class="text-3xl" style="color: var(--text-secondary)">&times;</button>
+                    </div>
+
+                    <div class="space-y-1">
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(0)">
+                                <span>这个平台是真实交易吗？</span>
+                                <span class="faq-icon" id="faq-icon-0">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-0">
+                                <p>不是。CryptoMindSim 是一个<strong>100% 模拟交易平台</strong>，所有交易均为虚拟操作，不涉及任何真实资金。行情数据虽然基于真实交易所，但所有交易行为都在本地数据库中进行，完全无风险。</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(1)">
+                                <span>什么是杠杆交易？</span>
+                                <span class="faq-icon" id="faq-icon-1">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-1">
+                                <p>杠杆交易是指用较小的保证金控制更大价值的资产。例如使用 5 倍杠杆，用 1000 USDT 可以交易价值 5000 USDT 的 BTC。杠杆会同时放大盈利和亏损，需要谨慎使用。</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(2)">
+                                <span>什么时候会触发爆仓？</span>
+                                <span class="faq-icon" id="faq-icon-2">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-2">
+                                <p>当持仓的<strong>未实现亏损达到保证金的 90%</strong> 时，系统会自动强制平仓（爆仓），以防止亏损超过保证金。高杠杆下价格波动幅度较小就可能触发爆仓，请合理控制杠杆倍数。</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(3)">
+                                <span>做多和做空有什么区别？</span>
+                                <span class="faq-icon" id="faq-icon-3">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-3">
+                                <p><strong>做多（LONG）</strong>：看涨时使用，价格上涨则盈利，价格下跌则亏损。<br>
+                                <strong>做空（SHORT）</strong>：看跌时使用，价格下跌则盈利，价格上涨则亏损。</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(4)">
+                                <span>AI 策略是如何工作的？</span>
+                                <span class="faq-icon" id="faq-icon-4">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-4">
+                                <p>平台集成了基于 Claude AI 的决策引擎，可以根据配置的策略提示词（Prompt）分析市场数据，生成交易建议（BUY/SELL/HOLD）。您可以在后台配置不同的策略，系统会定期执行分析并记录决策日志。</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(5)">
+                                <span>如何查看我的历史交易？</span>
+                                <span class="faq-icon" id="faq-icon-5">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-5">
+                                <p>在主面板切换到"交易历史"标签页，可以查看所有已完成的交易记录，包括开仓、平仓、爆仓等操作，以及每笔交易的盈亏情况。</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(6)">
+                                <span>资金用完了怎么办？</span>
+                                <span class="faq-icon" id="faq-icon-6">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-6">
+                                <p>如果您的账户余额归零且无持仓，可以联系管理员重置账户，或者注册一个新账户重新开始。这是模拟平台的优势 —— 可以无限次尝试，不断优化交易策略。</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(7)">
+                                <span>数据多久更新一次？</span>
+                                <span class="faq-icon" id="faq-icon-7">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-7">
+                                <p>• 价格行情：每 60 秒从交易所拉取最新数据<br>
+                                • 持仓盈亏：实时计算并更新<br>
+                                • 排行榜：每 3 秒刷新一次<br>
+                                • 页面数据：登录后每 3 秒自动刷新</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 悬浮帮助按钮组 -->
+        <div class="help-fab">
+            <div class="help-btn" onclick="showAboutModal()" title="项目介绍">
+                ℹ️
+            </div>
+            <div class="help-btn" onclick="showGuideModal()" title="使用说明">
+                📖
+            </div>
+            <div class="help-btn" onclick="showFaqModal()" title="常见问题">
+                ❓
+            </div>
+            <div class="help-btn help-btn-main" onclick="toggleHelpMenu()" title="帮助中心">
+                💡
+            </div>
+        </div>
+
+        <!-- 未登录展示区域 -->
+        <div id="publicContent">
+            <!-- 项目介绍横幅 -->
+            <div class="card rounded-lg p-6 mb-6">
+                <div class="text-center">
+                    <h2 class="text-3xl font-bold mb-3">📊 CryptoMindSim</h2>
+                    <p class="text-lg mb-4" style="color: var(--text-secondary)">加密货币智能交易模拟平台</p>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+                        <div class="p-4 rounded" style="background-color: var(--bg-secondary)">
+                            <div class="text-2xl mb-2">💰</div>
+                            <div class="font-bold mb-1">初始资金</div>
+                            <div style="color: var(--text-secondary)">10,000 USDT</div>
+                        </div>
+                        <div class="p-4 rounded" style="background-color: var(--bg-secondary)">
+                            <div class="text-2xl mb-2">🤖</div>
+                            <div class="font-bold mb-1">AI 驱动</div>
+                            <div style="color: var(--text-secondary)">智能决策辅助</div>
+                        </div>
+                        <div class="p-4 rounded" style="background-color: var(--bg-secondary)">
+                            <div class="text-2xl mb-2">📈</div>
+                            <div class="font-bold mb-1">实时行情</div>
+                            <div style="color: var(--text-secondary)">真实市场数据</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 币圈前十公链行情 -->
+            <div class="card rounded-lg p-6 mb-6">
+                <h2 class="text-xl font-bold mb-4">🏆 Top 10 加密货币行情</h2>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr style="border-bottom: 1px solid var(--border-color)">
+                                <th class="text-left p-2">排名</th>
+                                <th class="text-left p-2">币种</th>
+                                <th class="text-right p-2">价格 (USDT)</th>
+                                <th class="text-right p-2">24h涨跌幅</th>
+                                <th class="text-right p-2">市值</th>
+                            </tr>
+                        </thead>
+                        <tbody id="topCryptoList">
+                            <tr>
+                                <td colspan="5" class="text-center p-4" style="color: var(--text-secondary)">加载中...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 平台用户排行榜 -->
+            <div class="card rounded-lg p-6 mb-6">
+                <h2 class="text-xl font-bold mb-4">🎖️ 平台用户排行榜</h2>
+                <div id="publicLeaderboard">
+                    <div class="text-center p-4" style="color: var(--text-secondary)">加载中...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 主内容区域 - 仅登录后显示 -->
+        <div id="mainContent" class="hidden">
+            <!-- 顶部统计卡片 -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div class="card rounded-lg p-4">
+                    <div class="text-sm" style="color: var(--text-secondary)">账户余额</div>
+                    <div class="text-2xl font-bold mt-1" id="balance">-</div>
+                </div>
+                <div class="card rounded-lg p-4">
+                    <div class="text-sm" style="color: var(--text-secondary)">持仓总值</div>
+                    <div class="text-2xl font-bold mt-1" id="positionValue">-</div>
+                </div>
+                <div class="card rounded-lg p-4">
+                    <div class="text-sm" style="color: var(--text-secondary)">总资产</div>
+                    <div class="text-2xl font-bold mt-1" id="totalAssets">-</div>
+                </div>
+                <div class="card rounded-lg p-4">
+                    <div class="text-sm" style="color: var(--text-secondary)">收益率</div>
+                    <div class="text-2xl font-bold mt-1" id="roi">-</div>
+                </div>
+            </div>
+
+            <!-- 主内容区 -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- 左侧：价格图表 + 操作面板 -->
+                <div class="lg:col-span-2 space-y-6">
+                    <!-- 价格图表 -->
+                    <div class="card rounded-lg p-6">
+                        <div class="flex justify-between items-center mb-4">
+                            <h2 class="text-xl font-bold">BTC/USDT 实时行情</h2>
+                            <div class="text-2xl font-mono" id="currentPrice">-</div>
+                        </div>
+                        <canvas id="priceChart" height="80"></canvas>
+                    </div>
+
+                    <!-- 标签页导航 -->
+                    <div class="card rounded-lg">
+                        <div class="flex border-b" style="border-color: var(--border-color)">
+                            <button class="tab-button active" onclick="switchTab('strategies')">策略管理</button>
+                            <button class="tab-button" onclick="switchTab('positions')">持仓管理</button>
+                            <button class="tab-button" onclick="switchTab('history')">交易历史</button>
+                        </div>
+
+                        <!-- 策略管理面板 -->
+                        <div id="strategiesTab" class="p-6">
+                            <div class="mb-4">
+                                <div class="flex justify-between items-center mb-3">
+                                    <h3 class="font-bold">我的策略</h3>
+                                    <button onclick="showCreateStrategyModal()" class="btn-primary px-3 py-1.5 rounded text-sm">
+                                        + 创建策略
+                                    </button>
+                                </div>
+                                <div id="strategiesList" class="space-y-3">
+                                    <div class="text-center py-8" style="color: var(--text-secondary)">加载中...</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 持仓管理面板 -->
+                        <div id="positionsTab" class="p-6 hidden">
+                            <div id="positionsList" class="space-y-3">
+                                <div class="text-center py-8" style="color: var(--text-secondary)">暂无持仓</div>
+                            </div>
+                        </div>
+
+                        <!-- 交易历史面板 -->
+                        <div id="historyTab" class="p-6 hidden">
+                            <div id="tradeHistory" class="space-y-2">
+                                <div class="text-center py-8" style="color: var(--text-secondary)">暂无交易记录</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右侧：排行榜和统计 -->
+                <div class="space-y-6">
+                    <!-- 排行榜 -->
+                    <div class="card rounded-lg p-6">
+                        <h2 class="text-xl font-bold mb-4">🏆 排行榜</h2>
+                        <div id="leaderboard" class="space-y-2"></div>
+                    </div>
+
+                    <!-- 系统统计 -->
+                    <div class="card rounded-lg p-6">
+                        <h2 class="text-xl font-bold mb-4">📊 系统统计</h2>
+                        <div class="space-y-3 text-sm">
+                            <div class="flex justify-between">
+                                <span style="color: var(--text-secondary)">总用户数</span>
+                                <span class="font-semibold" id="totalUsers">-</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span style="color: var(--text-secondary)">活跃持仓</span>
+                                <span class="font-semibold" id="totalPositions">-</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span style="color: var(--text-secondary)">总交易数</span>
+                                <span class="font-semibold" id="totalTrades">-</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 风险提示 -->
+                    <div class="card rounded-lg p-4">
+                        <div class="text-sm" style="color: var(--text-secondary)">
+                            <div class="font-semibold mb-2">⚠️ 风险提示</div>
+                            <ul class="space-y-1 text-xs">
+                                <li>• 模拟交易仅供学习</li>
+                                <li>• AI策略自动执行</li>
+                                <li>• 合理控制仓位</li>
+                                <li>• 及时止损止盈</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 页脚 -->
+        <footer>
+            <div class="container mx-auto px-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
+                    <div>
+                        <h4 class="font-bold mb-2" style="color: var(--text-primary)">关于平台</h4>
+                        <p>CryptoMindSim 是一个AI驱动的加密货币模拟交易平台，致力于为用户提供安全、真实的交易学习环境。</p>
+                    </div>
+                    <div>
+                        <h4 class="font-bold mb-2" style="color: var(--text-primary)">快速链接</h4>
+                        <ul class="space-y-1">
+                            <li><a href="javascript:void(0)" onclick="showAboutModal()">项目介绍</a></li>
+                            <li><a href="javascript:void(0)" onclick="showGuideModal()">使用说明</a></li>
+                            <li><a href="javascript:void(0)" onclick="showFaqModal()">常见问题</a></li>
+                            <li><a href="https://github.com" target="_blank">GitHub 仓库</a></li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4 class="font-bold mb-2" style="color: var(--text-primary)">法律声明</h4>
+                        <p class="text-xs">本平台仅供教育和学习用途，所有交易均为模拟操作，不构成任何投资建议。加密货币投资存在高风险,请谨慎决策。</p>
+                    </div>
+                </div>
+                <div class="border-t mt-6 pt-6 text-center text-xs" style="border-color: var(--border-color)">
+                    <p>© 2024 CryptoMindSim. All Rights Reserved. | Made with 💜 for Crypto Enthusiasts</p>
+                    <p class="mt-1">Powered by FastAPI • Claude AI • CCXT • Chart.js</p>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // 全局变量
+        let currentUser = null;
+        let priceChart = null;
+        let updateInterval = null;
+        let currentTheme = 'light';
+        let isLoginMode = true; // true: 登录模式, false: 注册模式
+    </script>
+
+    <!-- 引入 JavaScript 模块（优先加载） -->
+    <script src="/static/js/toast.js"></script>
+    <script src="/static/js/theme.js"></script>
+
+    <script>
+        // ==================== 主题切换 ====================
+        // 主题功能已移至 js/theme.js
+
+        // 显示登录模态框
+        function showLoginModal() {
+            document.getElementById('loginModal').classList.remove('hidden');
+            isLoginMode = true;
+            updateModalUI();
+        }
+
+        // 隐藏登录模态框
+        function hideLoginModal() {
+            document.getElementById('loginModal').classList.add('hidden');
+            document.getElementById('modalUsername').value = '';
+            document.getElementById('modalPassword').value = '';
+        }
+
+        // 切换登录/注册模式
+        function switchMode() {
+            isLoginMode = !isLoginMode;
+            updateModalUI();
+        }
+
+        // 更新模态框 UI
+        function updateModalUI() {
+            if (isLoginMode) {
+                document.getElementById('modalTitle').textContent = '登录';
+                document.getElementById('loginBtn').textContent = '登录';
+                document.getElementById('switchText').textContent = '还没有账号？';
+                document.getElementById('switchBtn').textContent = '立即注册';
+            } else {
+                document.getElementById('modalTitle').textContent = '注册';
+                document.getElementById('loginBtn').textContent = '注册';
+                document.getElementById('switchText').textContent = '已有账号？';
+                document.getElementById('switchBtn').textContent = '立即登录';
+            }
+        }
+
+        // 处理登录/注册
+        async function handleLogin() {
+            const username = document.getElementById('modalUsername').value.trim();
+            const password = document.getElementById('modalPassword').value.trim();
+
+            if (!username || !password) {
+                showToast('请输入用户名和密码', 'warning');
+                return;
+            }
+
+            if (!isLoginMode && password.length < 4) {
+                showToast('密码长度至少4位', 'warning');
+                return;
+            }
+
+            try {
+                const endpoint = isLoginMode ? '/api/login' : '/api/register';
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (response.ok) {
+                    currentUser = await response.json();
+                    hideLoginModal();
+                    updateUserArea();
+                    initApp();
+                    showToast(
+                        isLoginMode ? `欢迎回来，${currentUser.username}！` : '注册成功，欢迎加入！',
+                        'success'
+                    );
+                } else {
+                    const error = await response.json();
+                    showToast(error.detail || '操作失败', 'error');
+                }
+            } catch (error) {
+                console.error('操作失败:', error);
+                showToast('网络错误，请重试', 'error');
+            }
+        }
+
+        // 更新用户区域显示
+        function updateUserArea() {
+            const userArea = document.getElementById('userArea');
+            const publicContent = document.getElementById('publicContent');
+            const mainContent = document.getElementById('mainContent');
+
+            if (currentUser) {
+                userArea.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <span class="text-sm font-semibold">${currentUser.username}</span>
+                        <button onclick="logout()" class="text-sm px-3 py-1 rounded" style="background-color: var(--bg-secondary); color: var(--text-secondary);">
+                            退出
+                        </button>
+                    </div>
+                `;
+                // 隐藏公共内容，显示个人主内容
+                publicContent.classList.add('hidden');
+                mainContent.classList.remove('hidden');
+            } else {
+                userArea.innerHTML = `
+                    <button onclick="showLoginModal()" class="btn-primary px-4 py-2 rounded font-semibold">
+                        登录
+                    </button>
+                `;
+                // 显示公共内容，隐藏个人主内容
+                publicContent.classList.remove('hidden');
+                mainContent.classList.add('hidden');
+            }
+        }
+
+        // 退出登录
+        function logout() {
+            if (confirm('确认退出登录？')) {
+                currentUser = null;
+                if (updateInterval) {
+                    clearInterval(updateInterval);
+                }
+                // 隐藏主内容区域
+                document.getElementById('mainContent').classList.add('hidden');
+                updateUserArea();
+            }
+        }
+
+        // 初始化应用（登录后）
+        function initApp() {
+            // 显示主内容区域
+            document.getElementById('mainContent').classList.remove('hidden');
+            initPriceChart();
+            updateData();
+            updateInterval = setInterval(updateData, 3000);
+        }
+
+        // 标签页切换
+        function switchTab(tab) {
+            if (!currentUser) {
+                showToast('请先登录后再进行交易', 'warning');
+                showLoginModal();
+                return;
+            }
+
+            // 隐藏所有标签页
+            document.querySelectorAll('[id$="Tab"]').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.tab-button').forEach(el => el.classList.remove('active'));
+
+            // 显示选中的标签页
+            const tabs = {
+                'strategies': 'strategiesTab',
+                'positions': 'positionsTab',
+                'history': 'historyTab'
+            };
+
+            document.getElementById(tabs[tab]).classList.remove('hidden');
+            event.target.classList.add('active');
+
+            // 根据标签页加载对应数据
+            if (tab === 'strategies') {
+                updateStrategies();
+            } else if (tab === 'history') {
+                updateTradeHistory();
+            }
+        }
+
+        // 初始化价格图表
+        function initPriceChart() {
+            if (priceChart) return; // 避免重复初始化
+
+            const ctx = document.getElementById('priceChart').getContext('2d');
+            priceChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'BTC/USDT',
+                        data: [],
+                        borderColor: getComputedStyle(document.documentElement).getPropertyValue('--text-primary'),
+                        backgroundColor: 'rgba(0, 0, 0, 0.05)',
+                        tension: 0.4,
+                        fill: true,
+                        pointRadius: 0,
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            ticks: {
+                                color: getComputedStyle(document.documentElement).getPropertyValue('--chart-text')
+                            },
+                            grid: {
+                                color: getComputedStyle(document.documentElement).getPropertyValue('--chart-grid')
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                color: getComputedStyle(document.documentElement).getPropertyValue('--chart-text')
+                            },
+                            grid: {
+                                color: getComputedStyle(document.documentElement).getPropertyValue('--chart-grid')
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 更新图表主题
+        function updateChartTheme() {
+            const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--text-primary');
+            const chartText = getComputedStyle(document.documentElement).getPropertyValue('--chart-text');
+            const chartGrid = getComputedStyle(document.documentElement).getPropertyValue('--chart-grid');
+
+            priceChart.data.datasets[0].borderColor = accentColor;
+            priceChart.options.scales.y.ticks.color = chartText;
+            priceChart.options.scales.y.grid.color = chartGrid;
+            priceChart.options.scales.x.ticks.color = chartText;
+            priceChart.options.scales.x.grid.color = chartGrid;
+            priceChart.update();
+        }
+
+        // 更新数据
+        async function updateData() {
+            // 始终更新价格图表（游客也能看）
+            await updatePriceChart();
+
+            // 只有登录后才更新用户相关数据
+            if (currentUser) {
+                await Promise.all([
+                    updateUserInfo(),
+                    updatePositions(),
+                    updateLeaderboard(),
+                    updateStats(),
+                    updateStrategies()
+                ]);
+                updateEstimatedMargin();
+            } else {
+                // 游客模式也更新排行榜和统计
+                await Promise.all([
+                    updateLeaderboard(),
+                    updateStats()
+                ]);
+            }
+        }
+
+        // 更新用户信息
+        async function updateUserInfo() {
+            if (!currentUser) return;
+
+            try {
+                const response = await fetch(`/api/users/${currentUser.id}`);
+                const user = await response.json();
+
+                const positionsResponse = await fetch(`/api/users/${currentUser.id}/positions`);
+                const positions = await positionsResponse.json();
+
+                const positionValue = positions.reduce((sum, p) => sum + p.margin + p.unrealized_pnl, 0);
+                const totalAssets = user.balance + positionValue;
+                const roi = ((totalAssets - user.initial_balance) / user.initial_balance * 100).toFixed(2);
+
+                document.getElementById('balance').textContent = user.balance.toFixed(2) + ' USDT';
+                document.getElementById('positionValue').textContent = positionValue.toFixed(2) + ' USDT';
+                document.getElementById('totalAssets').textContent = totalAssets.toFixed(2) + ' USDT';
+
+                const roiElement = document.getElementById('roi');
+                roiElement.textContent = roi + '%';
+                roiElement.className = `text-2xl font-bold mt-1 ${parseFloat(roi) >= 0 ? 'profit' : 'loss'}`;
+            } catch (error) {
+                console.error('更新用户信息失败:', error);
+            }
+        }
+
+        // 更新预估保证金
+        function updateEstimatedMargin() {
+            try {
+                const currentPrice = parseFloat(document.getElementById('currentPrice').textContent.replace('$', '').replace(',', '')) || 0;
+                const quantity = parseFloat(document.getElementById('quantityInput').value) || 0;
+                const leverage = parseFloat(document.getElementById('leverageInput').value) || 1;
+
+                const margin = (currentPrice * quantity * leverage) / leverage;
+                document.getElementById('estimatedMargin').textContent = margin.toFixed(2) + ' USDT';
+            } catch (error) {
+                console.error('计算保证金失败:', error);
+            }
+        }
+
+        // 更新持仓列表
+        async function updatePositions() {
+            if (!currentUser) return;
+
+            try {
+                const response = await fetch(`/api/users/${currentUser.id}/positions`);
+                const positions = await response.json();
+
+                const container = document.getElementById('positionsList');
+                if (positions.length === 0) {
+                    container.innerHTML = '<div class="text-center py-8" style="color: var(--text-secondary)">暂无持仓</div>';
+                    return;
+                }
+
+                container.innerHTML = positions.map(p => {
+                    const pnlClass = p.unrealized_pnl >= 0 ? 'profit' : 'loss';
+                    const sideClass = p.side === 'LONG' ? 'badge-success' : 'badge-danger';
+                    return `
+                        <div class="card rounded p-4">
+                            <div class="flex justify-between items-start mb-3">
+                                <div>
+                                    <span class="font-bold text-lg">${p.symbol}</span>
+                                    <span class="badge ${sideClass} ml-2">${p.side} ${p.leverage}x</span>
+                                </div>
+                                <button onclick="closePosition(${p.id})"
+                                    class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-sm transition">
+                                    平仓
+                                </button>
+                            </div>
+                            <div class="grid grid-cols-3 gap-2 text-sm">
+                                <div>
+                                    <div style="color: var(--text-secondary)">开仓价</div>
+                                    <div class="font-semibold">${p.entry_price.toFixed(2)}</div>
+                                </div>
+                                <div>
+                                    <div style="color: var(--text-secondary)">数量</div>
+                                    <div class="font-semibold">${p.quantity}</div>
+                                </div>
+                                <div>
+                                    <div style="color: var(--text-secondary)">盈亏</div>
+                                    <div class="font-semibold ${pnlClass}">${p.unrealized_pnl.toFixed(2)}</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('更新持仓失败:', error);
+            }
+        }
+
+        // 更新交易历史
+        async function updateTradeHistory() {
+            if (!currentUser) return;
+
+            try {
+                const response = await fetch(`/api/users/${currentUser.id}/trades`);
+                const trades = await response.json();
+
+                const container = document.getElementById('tradeHistory');
+                if (trades.length === 0) {
+                    container.innerHTML = '<div class="text-center py-8" style="color: var(--text-secondary)">暂无交易记录</div>';
+                    return;
+                }
+
+                container.innerHTML = trades.map(t => {
+                    const typeClass = t.trade_type === 'OPEN' ? 'badge-info' : 'badge-warning';
+                    const pnlClass = t.pnl >= 0 ? 'profit' : 'loss';
+                    return `
+                        <div class="card rounded p-3 text-sm">
+                            <div class="flex justify-between items-center">
+                                <div class="flex items-center gap-2">
+                                    <span class="badge ${typeClass}">${t.trade_type}</span>
+                                    <span class="font-semibold">${t.symbol}</span>
+                                    <span style="color: var(--text-secondary)">${t.side} ${t.leverage}x</span>
+                                </div>
+                                <div class="text-right">
+                                    <div class="font-semibold">${t.price.toFixed(2)}</div>
+                                    ${t.pnl !== 0 ? `<div class="${pnlClass}">${t.pnl.toFixed(2)}</div>` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('更新交易历史失败:', error);
+            }
+        }
+
+        // 更新排行榜
+        async function updateLeaderboard() {
+            try {
+                const response = await fetch('/api/leaderboard');
+                const leaderboard = await response.json();
+
+                const container = document.getElementById('leaderboard');
+                container.innerHTML = leaderboard.map((entry, index) => {
+                    const medal = ['🥇', '🥈', '🥉'][index] || `${index + 1}.`;
+                    const roiClass = entry.roi >= 0 ? 'profit' : 'loss';
+                    return `
+                        <div class="card rounded p-3 flex justify-between items-center">
+                            <div>
+                                <span class="text-lg mr-2">${medal}</span>
+                                <span class="font-semibold">${entry.username}</span>
+                            </div>
+                            <div class="text-right">
+                                <div class="font-bold">${entry.total_assets.toFixed(2)}</div>
+                                <div class="text-sm ${roiClass}">${entry.roi.toFixed(2)}%</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('更新排行榜失败:', error);
+            }
+        }
+
+        // 更新统计信息
+        async function updateStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const stats = await response.json();
+
+                document.getElementById('totalUsers').textContent = stats.total_users;
+                document.getElementById('totalPositions').textContent = stats.total_positions;
+                document.getElementById('totalTrades').textContent = stats.total_trades;
+            } catch (error) {
+                console.error('更新统计失败:', error);
+            }
+        }
+
+        // 更新 AI 策略列表
+        async function updatePrompts() {
+            try {
+                const response = await fetch('/api/prompts');
+                const prompts = await response.json();
+
+                const container = document.getElementById('promptsList');
+                if (prompts.length === 0) {
+                    container.innerHTML = '<div class="text-sm" style="color: var(--text-secondary)">暂无策略配置</div>';
+                    return;
+                }
+
+                container.innerHTML = prompts.map(p => `
+                    <div class="card rounded p-3 flex justify-between items-center">
+                        <div class="flex-1">
+                            <div class="font-semibold text-sm">${p.name}</div>
+                            ${p.description ? `<div class="text-xs" style="color: var(--text-secondary)">${p.description}</div>` : ''}
+                            ${p.is_active ? '<span class="badge badge-success mt-1">✓ 已激活</span>' : ''}
+                        </div>
+                        ${!p.is_active ? `
+                            <button onclick="activatePrompt(${p.id})"
+                                class="btn-primary px-3 py-1 rounded text-xs">
+                                激活
+                            </button>
+                        ` : ''}
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('更新策略失败:', error);
+            }
+        }
+
+        // 更新价格图表
+        async function updatePriceChart() {
+            try {
+                const [currentResponse, historyResponse] = await Promise.all([
+                    fetch('/api/price/current'),
+                    fetch('/api/price/history?hours=1')
+                ]);
+
+                const current = await currentResponse.json();
+                const history = await historyResponse.json();
+
+                document.getElementById('currentPrice').textContent = '$' + current.price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+                if (history.data && history.data.length > 0) {
+                    const labels = history.data.map(d => new Date(d.timestamp).toLocaleTimeString());
+                    const prices = history.data.map(d => d.price);
+
+                    priceChart.data.labels = labels;
+                    priceChart.data.datasets[0].data = prices;
+                    priceChart.update('none');
+                }
+            } catch (error) {
+                console.error('更新价格图表失败:', error);
+            }
+        }
+
+        // AI 分析
+        async function runAIAnalysis() {
+            document.getElementById('marketTrend').textContent = '分析中...';
+            document.getElementById('marketTrend').className = 'badge badge-info';
+
+            // 模拟 AI 分析（实际应调用后端 API）
+            setTimeout(() => {
+                const trends = [
+                    { text: '上涨趋势', class: 'badge-success' },
+                    { text: '下跌趋势', class: 'badge-danger' },
+                    { text: '震荡整理', class: 'badge-warning' }
+                ];
+                const trend = trends[Math.floor(Math.random() * trends.length)];
+
+                document.getElementById('marketTrend').textContent = trend.text;
+                document.getElementById('marketTrend').className = 'badge ' + trend.class;
+
+                document.getElementById('volatility').textContent = (Math.random() * 5 + 1).toFixed(2) + '%';
+
+                const suggestions = ['建议做多', '建议做空', '建议观望'];
+                document.getElementById('aiSuggestion').textContent = suggestions[Math.floor(Math.random() * suggestions.length)];
+            }, 1500);
+        }
+
+        // 执行 AI 交易
+        function executeAITrade() {
+            showToast('AI 自动交易功能开发中，敬请期待', 'info');
+        }
+
+        // 开仓
+        async function openPosition() {
+            if (!currentUser) {
+                showToast('请先登录后再进行交易', 'warning');
+                showLoginModal();
+                return;
+            }
+
+            const side = document.getElementById('sideSelect').value;
+            const leverage = parseInt(document.getElementById('leverageInput').value);
+            const quantity = parseFloat(document.getElementById('quantityInput').value);
+
+            if (!quantity || quantity <= 0) {
+                showToast('请输入有效的交易数量', 'warning');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/users/${currentUser.id}/positions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ side, leverage, quantity })
+                });
+
+                if (response.ok) {
+                    const position = await response.json();
+                    showToast(`开仓成功！${side} ${quantity} BTC @ ${leverage}x`, 'success');
+                    updateData();
+                } else {
+                    const error = await response.json();
+                    showToast(error.detail || '开仓失败', 'error');
+                }
+            } catch (error) {
+                console.error('开仓失败:', error);
+                showToast('网络错误，请重试', 'error');
+            }
+        }
+
+        // 平仓
+        async function closePosition(positionId) {
+            if (!confirm('确认平仓？')) return;
+
+            try {
+                const response = await fetch(`/api/positions/${positionId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    showToast('平仓成功！', 'success');
+                    updateData();
+                } else {
+                    showToast('平仓失败', 'error');
+                }
+            } catch (error) {
+                console.error('平仓失败:', error);
+                showToast('网络错误，请重试', 'error');
+            }
+        }
+
+        // 激活策略
+        async function activatePrompt(promptId) {
+            try {
+                const response = await fetch(`/api/prompts/${promptId}/activate`, {
+                    method: 'PUT'
+                });
+
+                if (response.ok) {
+                    showToast('AI 策略已激活！', 'success');
+                    updatePrompts();
+                } else {
+                    showToast('激活失败', 'error');
+                }
+            } catch (error) {
+                console.error('激活策略失败:', error);
+                showToast('网络错误，请重试', 'error');
+            }
+        }
+
+        // ==================== 模态框控制函数 ====================
+
+        // 项目介绍
+        function showAboutModal() {
+            document.getElementById('aboutModal').classList.remove('hidden');
+        }
+
+        function hideAboutModal() {
+            document.getElementById('aboutModal').classList.add('hidden');
+        }
+
+        // 使用说明
+        function showGuideModal() {
+            document.getElementById('guideModal').classList.remove('hidden');
+        }
+
+        function hideGuideModal() {
+            document.getElementById('guideModal').classList.add('hidden');
+        }
+
+        // 常见问题
+        function showFaqModal() {
+            document.getElementById('faqModal').classList.remove('hidden');
+        }
+
+        function hideFaqModal() {
+            document.getElementById('faqModal').classList.add('hidden');
+        }
+
+        // FAQ 折叠功能
+        function toggleFaq(index) {
+            const answer = document.getElementById(`faq-answer-${index}`);
+            const icon = document.getElementById(`faq-icon-${index}`);
+
+            answer.classList.toggle('active');
+            icon.classList.toggle('active');
+        }
+
+        // 帮助菜单切换（备用功能）
+        function toggleHelpMenu() {
+            showToast('点击下方图标查看对应帮助内容', 'info', '帮助中心');
+        }
+
+        // 加载前十加密货币行情数据（未登录时使用）
+        async function loadTopCryptoData() {
+            try {
+                // 模拟数据 - 实际项目中应该调用真实 API
+                const topCryptos = [
+                    { rank: 1, name: 'Bitcoin', symbol: 'BTC', price: 43256.78, change24h: 2.34, marketCap: '845.2B' },
+                    { rank: 2, name: 'Ethereum', symbol: 'ETH', price: 2287.45, change24h: -1.12, marketCap: '274.8B' },
+                    { rank: 3, name: 'BNB', symbol: 'BNB', price: 312.56, change24h: 0.87, marketCap: '48.1B' },
+                    { rank: 4, name: 'Solana', symbol: 'SOL', price: 98.23, change24h: 5.67, marketCap: '42.3B' },
+                    { rank: 5, name: 'Ripple', symbol: 'XRP', price: 0.5234, change24h: -0.45, marketCap: '28.9B' },
+                    { rank: 6, name: 'Cardano', symbol: 'ADA', price: 0.4123, change24h: 1.23, marketCap: '14.5B' },
+                    { rank: 7, name: 'Avalanche', symbol: 'AVAX', price: 36.78, change24h: 3.45, marketCap: '13.8B' },
+                    { rank: 8, name: 'Polkadot', symbol: 'DOT', price: 7.23, change24h: -2.34, marketCap: '9.2B' },
+                    { rank: 9, name: 'Polygon', symbol: 'MATIC', price: 0.8234, change24h: 4.56, marketCap: '7.6B' },
+                    { rank: 10, name: 'Chainlink', symbol: 'LINK', price: 14.56, change24h: 1.89, marketCap: '7.1B' }
+                ];
+
+                const container = document.getElementById('topCryptoList');
+                container.innerHTML = topCryptos.map(crypto => `
+                    <tr style="border-bottom: 1px solid var(--border-color)">
+                        <td class="p-2">#${crypto.rank}</td>
+                        <td class="p-2">
+                            <div class="font-semibold">${crypto.symbol}</div>
+                            <div class="text-xs" style="color: var(--text-secondary)">${crypto.name}</div>
+                        </td>
+                        <td class="p-2 text-right font-mono">$${crypto.price.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                        <td class="p-2 text-right">
+                            <span class="${crypto.change24h >= 0 ? 'text-green-500' : 'text-red-500'}">
+                                ${crypto.change24h >= 0 ? '+' : ''}${crypto.change24h.toFixed(2)}%
+                            </span>
+                        </td>
+                        <td class="p-2 text-right" style="color: var(--text-secondary)">$${crypto.marketCap}</td>
+                    </tr>
+                `).join('');
+            } catch (error) {
+                console.error('加载加密货币行情失败:', error);
+                document.getElementById('topCryptoList').innerHTML = `
+                    <tr><td colspan="5" class="text-center p-4" style="color: var(--text-secondary)">加载失败</td></tr>
+                `;
+            }
+        }
+
+        // 加载公开排行榜（未登录时使用）
+        async function loadPublicLeaderboard() {
+            try {
+                const response = await fetch('/api/leaderboard');
+                const leaderboard = await response.json();
+
+                const container = document.getElementById('publicLeaderboard');
+                if (leaderboard.length === 0) {
+                    container.innerHTML = '<div class="text-center p-4" style="color: var(--text-secondary)">暂无数据</div>';
+                    return;
+                }
+
+                container.innerHTML = `
+                    <div class="space-y-2">
+                        ${leaderboard.slice(0, 10).map((user, index) => {
+                            const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`;
+                            const totalAssets = user.balance + user.total_margin;
+                            const roi = ((totalAssets - user.initial_balance) / user.initial_balance * 100).toFixed(2);
+                            const roiColor = roi >= 0 ? 'text-green-500' : 'text-red-500';
+
+                            return `
+                                <div class="flex items-center justify-between p-3 rounded" style="background-color: var(--bg-secondary)">
+                                    <div class="flex items-center gap-3">
+                                        <div class="text-xl w-8">${medal}</div>
+                                        <div>
+                                            <div class="font-semibold">${user.username}</div>
+                                            <div class="text-xs" style="color: var(--text-secondary)">总资产: ${totalAssets.toFixed(2)} USDT</div>
+                                        </div>
+                                    </div>
+                                    <div class="${roiColor} font-bold">
+                                        ${roi >= 0 ? '+' : ''}${roi}%
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            } catch (error) {
+                console.error('加载排行榜失败:', error);
+                document.getElementById('publicLeaderboard').innerHTML = `
+                    <div class="text-center p-4" style="color: var(--text-secondary)">加载失败</div>
+                `;
+            }
+        }
+
+        // 页面加载时初始化
+        window.addEventListener('DOMContentLoaded', () => {
+            updateUserArea();
+            // 如果未登录，加载公开内容
+            if (!currentUser) {
+                loadTopCryptoData();
+                loadPublicLeaderboard();
+            }
+        });
+
+        // ESC 键关闭所有模态框
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                hideAboutModal();
+                hideGuideModal();
+                hideFaqModal();
+                hideLoginModal();
+                hideStrategyModal();
+            }
+        });
+</script>
+
+<!-- 引入 JavaScript 模块 -->
+<script src="/static/js/modals.js"></script>
+            try {
+                const response = await fetch('/api/strategies/symbols');
+                availableSymbols = await response.json();
+
+                const select = document.getElementById('strategySymbol');
+                select.innerHTML = availableSymbols.map(s =>
+                    `<option value="${s.symbol}">${s.symbol} - ${s.name}</option>`
+                ).join('');
+            } catch (error) {
+                console.error('加载交易对失败:', error);
+            }
+        }
+
+        // 加载AI模型列表
+        async function loadModels() {
+            try {
+                const response = await fetch('/api/ai/models');
+                availableModels = await response.json();
+
+                const select = document.getElementById('strategyModel');
+                select.innerHTML = availableModels.map(m => {
+                    const badge = m.description ? ` ${m.description}` : '';
+                    return `<option value="${m.id}">${m.icon} ${m.name} - ${m.provider}${badge}</option>`;
+                }).join('');
+            } catch (error) {
+                console.error('加载AI模型失败:', error);
+                document.getElementById('strategyModel').innerHTML = '<option value="claude-4.5-opus">Claude 4.5 Opus (默认)</option>';
+            }
+        }
+
+        // 加载预设策略模板
+        async function loadPresetStrategies() {
+            try {
+                const response = await fetch('/api/strategies/presets');
+                presetStrategies = await response.json();
+
+                const select = document.getElementById('presetStrategy');
+                select.innerHTML = '<option value="">-- 选择预设策略模板 --</option>' +
+                    presetStrategies.map((p, idx) =>
+                        `<option value="${idx}">${p.name} - ${p.description}</option>`
+                    ).join('');
+            } catch (error) {
+                console.error('加载预设策略失败:', error);
+            }
+        }
+
+        // 应用预设策略模板
+        function loadPresetStrategy() {
+            const select = document.getElementById('presetStrategy');
+            const idx = select.value;
+
+            if (idx === '') return;
+
+            const preset = presetStrategies[parseInt(idx)];
+            if (!preset) return;
+
+            // 填充表单（使用可用的字段）
+            document.getElementById('strategyName').value = preset.name;
+            document.getElementById('strategyDescription').value = preset.description || '';
+            document.getElementById('strategyPrompt').value = preset.prompt_text;
+
+            // 如果API返回了额外字段，也使用它们
+            if (preset.symbol) {
+                document.getElementById('strategySymbol').value = preset.symbol;
+            }
+            if (preset.ai_model) {
+                document.getElementById('strategyModel').value = preset.ai_model;
+            }
+            if (preset.leverage) {
+                // 根据杠杆倍数设置执行频率建议
+                if (preset.leverage >= 10) {
+                    document.getElementById('strategyInterval').value = '60'; // 高杠杆，快速执行
+                } else if (preset.leverage >= 5) {
+                    document.getElementById('strategyInterval').value = '180'; // 中杠杆
+                } else {
+                    document.getElementById('strategyInterval').value = '300'; // 低杠杆，稳健执行
+                }
+            }
+
+            showToast(`已加载预设策略：${preset.name}`, 'success');
+        }
+
+        // 显示创建策略模态框
+        async function showCreateStrategyModal() {
+            if (!currentUser) {
+                showToast('请先登录', 'warning');
+                showLoginModal();
+                return;
+            }
+
+            // 检查是否已配置 AI
+            if (typeof checkAIConfig === 'function' && !checkAIConfig()) {
+                showToast('请先配置 AI API Key', 'warning');
+                setTimeout(() => {
+                    if (typeof showSettingsModal === 'function') {
+                        showSettingsModal();
+                    }
+                }, 1000);
+                return;
+            }
+
+            // 加载选择列表
+            await Promise.all([loadSymbols(), loadModels(), loadPresetStrategies()]);
+
+            document.getElementById('strategyModalTitle').textContent = '创建策略';
+            document.getElementById('editingStrategyId').value = '';
+            document.getElementById('strategyName').value = '';
+            document.getElementById('strategyDescription').value = '';
+            document.getElementById('strategyPrompt').value = '';
+            document.getElementById('strategyInterval').value = '300';
+            document.getElementById('presetStrategy').value = '';
+            document.getElementById('saveStrategyBtn').textContent = '保存策略';
+            document.getElementById('presetStrategySection').style.display = 'block';
+
+            document.getElementById('strategyModal').classList.remove('hidden');
+        }
+
+        // 显示编辑策略模态框
+        async function showEditStrategyModal(strategyId) {
+            if (!currentUser) return;
+
+            try {
+                // 加载选择列表
+                await Promise.all([loadSymbols(), loadModels()]);
+
+                // 获取策略详情
+                const response = await fetch(`/api/strategies/${strategyId}?user_id=${currentUser.id}`);
+                if (!response.ok) throw new Error('获取策略失败');
+
+                const strategy = await response.json();
+
+                document.getElementById('strategyModalTitle').textContent = '编辑策略';
+                document.getElementById('editingStrategyId').value = strategyId;
+                document.getElementById('strategyName').value = strategy.name;
+                document.getElementById('strategySymbol').value = strategy.symbol;
+                document.getElementById('strategyModel').value = strategy.ai_model;
+                document.getElementById('strategyInterval').value = strategy.execution_interval;
+                document.getElementById('strategyDescription').value = strategy.description || '';
+                document.getElementById('strategyPrompt').value = strategy.prompt_text;
+                document.getElementById('saveStrategyBtn').textContent = '更新策略';
+                document.getElementById('presetStrategySection').style.display = 'none'; // 编辑时隐藏预设选择
+
+                document.getElementById('strategyModal').classList.remove('hidden');
+            } catch (error) {
+                console.error('加载策略失败:', error);
+                showToast('加载策略失败', 'error');
+            }
+        }
+
+        // 隐藏策略模态框
+        function hideStrategyModal() {
+            document.getElementById('strategyModal').classList.add('hidden');
+        }
+
+        // 保存策略（创建或更新）
+        async function saveStrategy() {
+            if (!currentUser) return;
+
+            const name = document.getElementById('strategyName').value.trim();
+            const symbol = document.getElementById('strategySymbol').value;
+            const model = document.getElementById('strategyModel').value;
+            const interval = parseInt(document.getElementById('strategyInterval').value);
+            const description = document.getElementById('strategyDescription').value.trim();
+            const prompt = document.getElementById('strategyPrompt').value.trim();
+
+            // 验证
+            if (!name) {
+                showToast('请输入策略名称', 'warning');
+                return;
+            }
+            if (!prompt) {
+                showToast('请输入AI提示词', 'warning');
+                return;
+            }
+            if (interval < 60) {
+                showToast('执行频率最小为60秒', 'warning');
+                return;
+            }
+
+            const strategyData = {
+                name,
+                symbol,
+                ai_model: model,
+                execution_interval: interval,
+                description: description || null,
+                prompt_text: prompt
+            };
+
+            try {
+                const editingId = document.getElementById('editingStrategyId').value;
+                let response;
+
+                if (editingId) {
+                    // 更新策略
+                    response = await fetch(`/api/strategies/${editingId}?user_id=${currentUser.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(strategyData)
+                    });
+                } else {
+                    // 创建策略
+                    response = await fetch(`/api/strategies?user_id=${currentUser.id}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(strategyData)
+                    });
+                }
+
+                if (response.ok) {
+                    showToast(editingId ? '策略更新成功' : '策略创建成功', 'success');
+                    hideStrategyModal();
+                    updateStrategies();
+                } else {
+                    const error = await response.json();
+                    showToast(error.detail || '操作失败', 'error');
+                }
+            } catch (error) {
+                console.error('保存策略失败:', error);
+                showToast('网络错误', 'error');
+            }
+        }
+
+        // 更新策略列表
+        async function updateStrategies() {
+            if (!currentUser) return;
+
+            try {
+                const response = await fetch(`/api/strategies?user_id=${currentUser.id}`);
+                const strategies = await response.json();
+
+                const container = document.getElementById('strategiesList');
+                if (strategies.length === 0) {
+                    container.innerHTML = `
+                        <div class="text-center py-8" style="color: var(--text-secondary)">
+                            <div class="mb-3">暂无策略</div>
+                            <button onclick="showCreateStrategyModal()" class="btn-primary px-4 py-2 rounded">
+                                创建第一个策略
+                            </button>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = strategies.map(s => {
+                    const statusBadge = s.is_active
+                        ? '<span class="badge badge-success">运行中</span>'
+                        : '<span class="badge badge-secondary">已停用</span>';
+
+                    const lastExec = s.last_executed_at
+                        ? new Date(s.last_executed_at).toLocaleString('zh-CN')
+                        : '从未执行';
+
+                    return `
+                        <div class="card rounded p-4">
+                            <div class="flex justify-between items-start mb-3">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <span class="font-bold text-lg">${s.name}</span>
+                                        ${statusBadge}
+                                    </div>
+                                    ${s.description ? `<div class="text-sm mb-2" style="color: var(--text-secondary)">${s.description}</div>` : ''}
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-2 text-sm mb-3">
+                                <div>
+                                    <span style="color: var(--text-secondary)">交易对：</span>
+                                    <span class="font-semibold">${s.symbol}</span>
+                                </div>
+                                <div>
+                                    <span style="color: var(--text-secondary)">模型：</span>
+                                    <span class="font-semibold">${s.ai_model}</span>
+                                </div>
+                                <div>
+                                    <span style="color: var(--text-secondary)">执行频率：</span>
+                                    <span class="font-semibold">${s.execution_interval}秒</span>
+                                </div>
+                                <div>
+                                    <span style="color: var(--text-secondary)">上次执行：</span>
+                                    <span class="text-xs">${lastExec}</span>
+                                </div>
+                            </div>
+
+                            <div class="flex gap-2">
+                                ${s.is_active ? `
+                                    <button onclick="deactivateStrategy(${s.id})"
+                                        class="flex-1 bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-2 rounded text-sm transition">
+                                        停用
+                                    </button>
+                                ` : `
+                                    <button onclick="activateStrategy(${s.id})"
+                                        class="flex-1 bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded text-sm transition">
+                                        激活
+                                    </button>
+                                `}
+                                <button onclick="showEditStrategyModal(${s.id})"
+                                    class="flex-1 btn-primary px-3 py-2 rounded text-sm">
+                                    编辑
+                                </button>
+                                <button onclick="deleteStrategy(${s.id})"
+                                    class="flex-1 bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded text-sm transition">
+                                    删除
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('更新策略列表失败:', error);
+            }
+        }
+
+        // 激活策略
+        async function activateStrategy(strategyId) {
+            if (!currentUser) return;
+
+            try {
+                const response = await fetch(`/api/strategies/${strategyId}/activate?user_id=${currentUser.id}`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    showToast('策略已激活，系统将自动执行', 'success');
+                    updateStrategies();
+                } else {
+                    const error = await response.json();
+                    showToast(error.detail || '激活失败', 'error');
+                }
+            } catch (error) {
+                console.error('激活策略失败:', error);
+                showToast('网络错误', 'error');
+            }
+        }
+
+        // 停用策略
+        async function deactivateStrategy(strategyId) {
+            if (!currentUser) return;
+
+            try {
+                const response = await fetch(`/api/strategies/${strategyId}/deactivate?user_id=${currentUser.id}`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    showToast('策略已停用', 'success');
+                    updateStrategies();
+                } else {
+                    const error = await response.json();
+                    showToast(error.detail || '停用失败', 'error');
+                }
+            } catch (error) {
+                console.error('停用策略失败:', error);
+                showToast('网络错误', 'error');
+            }
+        }
+
+        // 删除策略
+        async function deleteStrategy(strategyId) {
+            if (!currentUser) return;
+
+            if (!confirm('确认删除此策略？此操作不可撤销。')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/strategies/${strategyId}?user_id=${currentUser.id}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    showToast('策略已删除', 'success');
+                    updateStrategies();
+                } else {
+                    const error = await response.json();
+                    showToast(error.detail || '删除失败', 'error');
+                }
+            } catch (error) {
+                console.error('删除策略失败:', error);
+                showToast('网络错误', 'error');
+            }
+        }
+</script>
+
+<!-- 引入 JavaScript 模块 -->
+<script src="/static/js/modals.js"></script>
+<script src="/static/js/settings.js"></script>
+<script src="/static/js/strategy.js"></script>
+<script src="/static/js/trading.js"></script>
+<script src="/static/js/data.js"></script>
+<script src="/static/js/auth.js"></script>
+<script src="/static/js/init.js"></script>
+
+</body>
+</html>

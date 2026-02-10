@@ -1,0 +1,1140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CryptoMindSim - 加密货币模拟交易平台</title>
+    <meta name="description" content="基于AI的加密货币模拟交易平台，安全学习数字货币交易策略">
+    <meta name="keywords" content="加密货币,模拟交易,AI交易,比特币,区块链">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        /* 日间模式 - OKX 风格 */
+        :root {
+            --bg-primary: #f5f5f5;
+            --bg-secondary: #ffffff;
+            --bg-card: #ffffff;
+            --text-primary: #000000;
+            --text-secondary: #76808f;
+            --border-color: #eaecef;
+            --shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+            --shadow-lg: 0 2px 8px 0 rgba(0, 0, 0, 0.08);
+            --accent: #000000;
+            --accent-hover: #333333;
+            --success: #0ecb81;
+            --danger: #f6465d;
+            --warning: #ffa800;
+            --chart-grid: rgba(0, 0, 0, 0.05);
+            --chart-text: #76808f;
+        }
+
+        /* 夜间模式 - OKX 风格 */
+        [data-theme="dark"] {
+            --bg-primary: #0b0e11;
+            --bg-secondary: #1a1e23;
+            --bg-card: #1a1e23;
+            --text-primary: #eaecef;
+            --text-secondary: #76808f;
+            --border-color: #2b3139;
+            --shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+            --shadow-lg: 0 2px 8px 0 rgba(0, 0, 0, 0.5);
+            --accent: #eaecef;
+            --accent-hover: #ffffff;
+            --success: #0ecb81;
+            --danger: #f6465d;
+            --warning: #ffa800;
+            --chart-grid: rgba(255, 255, 255, 0.05);
+            --chart-text: #76808f;
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        .card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow);
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            box-shadow: var(--shadow-lg);
+        }
+
+        .btn-primary {
+            background-color: var(--accent);
+            color: white;
+            transition: background-color 0.2s ease;
+        }
+
+        [data-theme="dark"] .btn-primary {
+            color: #000000;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--accent-hover);
+        }
+
+        .profit { color: var(--success); }
+        .loss { color: var(--danger); }
+
+        .theme-toggle {
+            cursor: pointer;
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            transition: all 0.2s ease;
+        }
+
+        .theme-toggle:hover {
+            transform: scale(1.1);
+        }
+
+        .input-field {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            transition: border-color 0.2s ease;
+        }
+
+        .input-field:focus {
+            outline: none;
+            border-color: var(--text-primary);
+        }
+
+        /* 标签页样式 */
+        .tab-button {
+            padding: 0.5rem 1rem;
+            border-bottom: 2px solid transparent;
+            color: var(--text-secondary);
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+
+        .tab-button:hover {
+            color: var(--text-primary);
+        }
+
+        .tab-button.active {
+            color: var(--text-primary);
+            border-bottom-color: var(--text-primary);
+        }
+
+        .badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .badge-success {
+            background-color: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+        }
+
+        .badge-danger {
+            background-color: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+        }
+
+        .badge-warning {
+            background-color: rgba(245, 158, 11, 0.1);
+            color: var(--warning);
+        }
+
+        .badge-info {
+            background-color: rgba(0, 0, 0, 0.05);
+            color: var(--text-primary);
+        }
+
+        [data-theme="dark"] .badge-info {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        /* 自定义通知样式 */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .toast {
+            min-width: 300px;
+            padding: 1rem 1.25rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            animation: slideIn 0.3s ease-out;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+        }
+
+        .toast.success {
+            border-left: 4px solid var(--success);
+        }
+
+        .toast.error {
+            border-left: 4px solid var(--danger);
+        }
+
+        .toast.info {
+            border-left: 4px solid var(--text-primary);
+        }
+
+        .toast.warning {
+            border-left: 4px solid var(--warning);
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+        }
+
+        .toast.hiding {
+            animation: slideOut 0.3s ease-out forwards;
+        }
+
+        .toast-icon {
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .toast-content {
+            flex: 1;
+        }
+
+        .toast-title {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .toast-message {
+            font-size: 0.875rem;
+            opacity: 0.8;
+        }
+
+        .toast-close {
+            cursor: pointer;
+            font-size: 1.25rem;
+            opacity: 0.5;
+            transition: opacity 0.2s;
+        }
+
+        .toast-close:hover {
+            opacity: 1;
+        }
+
+        /* 模态框通用样式 */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            animation: fadeIn 0.2s ease-out forwards;
+        }
+
+        .modal-content {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 0.75rem;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            animation: slideUp 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        /* 顶部导航栏 */
+        .navbar {
+            background-color: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            transition: background-color 0.3s ease, border-color 0.3s ease;
+        }
+
+        /* 页脚样式 */
+        footer {
+            margin-top: 4rem;
+            padding: 2rem 0;
+            border-top: 1px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+
+        footer a {
+            color: var(--text-secondary);
+            transition: color 0.2s;
+        }
+
+        footer a:hover {
+            color: var(--text-primary);
+        }
+
+        /* 帮助按钮悬浮组 */
+        .help-fab {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            z-index: 999;
+        }
+
+        .help-btn {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 1.5rem;
+        }
+
+        .help-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+        }
+
+        .help-btn-main {
+            width: 64px;
+            height: 64px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        /* FAQ 折叠面板 */
+        .faq-item {
+            border-bottom: 1px solid var(--border-color);
+            padding: 1rem 0;
+        }
+
+        .faq-question {
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 600;
+            padding: 0.5rem 0;
+            transition: color 0.2s;
+        }
+
+        .faq-question:hover {
+            color: var(--text-primary);
+        }
+
+        .faq-answer {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+            color: var(--text-secondary);
+            padding-top: 0;
+        }
+
+        .faq-answer.active {
+            max-height: 500px;
+            padding-top: 0.5rem;
+        }
+
+        .faq-icon {
+            transition: transform 0.3s;
+        }
+
+        .faq-icon.active {
+            transform: rotate(180deg);
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+    <!-- 通知容器 -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <div class="">
+        <!-- 头部 -->
+        <header class="navbar p-4 mb-3 flex justify-between items-center">
+            <div>
+                <h1 class="text-2xl font-bold" style="color: var(--text-primary);" data-i18n="title">
+                    📊 CryptoMindSim
+                </h1>
+                <p class="text-xs mt-1" style="color: var(--text-secondary);" data-i18n="subtitle">
+                    加密货币智能交易模拟平台 · 初始资金 10,000 USDT
+                </p>
+            </div>
+            <!-- 右上角操作栏 -->
+            <div class="flex items-center gap-3">
+                <!-- 主题切换按钮 -->
+                <div class="theme-toggle" onclick="toggleTheme()">
+                    <span id="themeIcon">🌙</span>
+                </div>
+                <!-- 设置按钮 -->
+                <div class="theme-toggle" onclick="showSettingsModal()" title="设置">
+                    <span>⚙️</span>
+                </div>
+                <!-- 登录/用户信息 -->
+                <div id="userArea">
+                    <button onclick="showLoginModal()" class="btn-primary px-4 py-2 rounded font-semibold" data-i18n="login">
+                        登录
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- 登录/注册模态框 -->
+        <div id="loginModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="card rounded-lg p-6 max-w-md w-full mx-4">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-bold" id="modalTitle">登录</h2>
+                    <button onclick="hideLoginModal()" class="text-2xl" style="color: var(--text-secondary)">&times;</button>
+                </div>
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm mb-2" style="color: var(--text-secondary)">用户名</label>
+                        <input
+                            type="text"
+                            id="modalUsername"
+                            placeholder="请输入用户名"
+                            class="w-full input-field rounded px-4 py-2"
+                        >
+                    </div>
+                    <div>
+                        <label class="block text-sm mb-2" style="color: var(--text-secondary)">密码</label>
+                        <input
+                            type="password"
+                            id="modalPassword"
+                            placeholder="请输入密码"
+                            class="w-full input-field rounded px-4 py-2"
+                        >
+                    </div>
+                    <button id="loginBtn" onclick="handleLogin()" class="w-full btn-primary py-3 rounded font-semibold">
+                        登录
+                    </button>
+                    <div class="text-center text-sm" style="color: var(--text-secondary)">
+                        <span id="switchText">还没有账号？</span>
+                        <button onclick="switchMode()" class="font-semibold" style="color: var(--text-primary)" id="switchBtn">
+                            立即注册
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 设置模态框 -->
+        <div id="settingsModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="card rounded-lg p-6 max-w-md w-full mx-4">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-bold">AI 配置</h2>
+                    <button onclick="hideSettingsModal()" class="text-2xl" style="color: var(--text-secondary)">&times;</button>
+                </div>
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">
+                            🔑 API Key
+                        </label>
+                        <input
+                            type="password"
+                            id="apiKeyInput"
+                            placeholder="sk-xxxxxxxxxxxxxxxx"
+                            class="w-full input-field rounded px-4 py-2"
+                        >
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">
+                            🌐 Base URL（可选）
+                        </label>
+                        <input
+                            type="text"
+                            id="baseUrlInput"
+                            placeholder="https://api.hodlai.fun/v1"
+                            class="w-full input-field rounded px-4 py-2"
+                            value="https://api.hodlai.fun/v1"
+                        >
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">
+                            默认使用 https://api.hodlai.fun/v1
+                        </div>
+                    </div>
+
+                    <div class="bg-yellow-500 bg-opacity-10 border border-yellow-500 border-opacity-30 rounded p-3">
+                        <div class="text-sm" style="color: var(--warning)">
+                            <strong>⚠️ 安全提示</strong>
+                            <ul class="mt-2 space-y-1 text-xs" style="color: var(--text-secondary)">
+                                <li>• 请妥善保管您的 API Key</li>
+                                <li>• 建议使用权限受限的 API Key</li>
+                                <li>• 定期更换 API Key 以提高安全性</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <button onclick="saveSettings()" class="w-full btn-primary py-3 rounded font-semibold">
+                        保存配置
+                    </button>
+
+                    <!-- 危险操作区 -->
+                    <div class="mt-6 pt-4" style="border-top: 1px solid var(--border-color)">
+                        <div class="text-sm font-bold mb-2" style="color: var(--danger)" data-i18n="dangerZone">危险操作</div>
+                        <p class="text-xs mb-3" style="color: var(--text-secondary)" data-i18n="resetAllDesc">清除所有交易历史、持仓、策略和AI对话，余额恢复为初始值</p>
+                        <button onclick="resetAllData()" class="w-full py-2 rounded font-semibold text-white" style="background-color: var(--danger);" data-i18n="resetAllData">
+                            一键重置所有数据
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 创建/编辑策略模态框 -->
+        <div id="createStrategyModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" style="overflow-y: auto;">
+            <div class="card rounded-lg p-6 max-w-2xl w-full mx-4 my-8">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-bold" id="strategyModalTitle">创建策略</h2>
+                    <button onclick="hideCreateStrategyModal()" class="text-2xl" style="color: var(--text-secondary)">&times;</button>
+                </div>
+
+                <div class="space-y-4">
+                    <input type="hidden" id="editingStrategyId" value="">
+
+                    <!-- 预设策略模板 -->
+                    <div id="presetStrategySection">
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">
+                            📋 预设策略模板（可选）
+                        </label>
+                        <select id="strategyPresetSelect" class="w-full input-field rounded px-4 py-2" onchange="onPresetStrategyChange()">
+                            <option value="">-- 选择预设策略模板 --</option>
+                        </select>
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">选择预设模板后可以根据需要修改</div>
+                    </div>
+
+                    <!-- 策略名称 -->
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">策略名称</label>
+                        <input
+                            type="text"
+                            id="strategyName"
+                            placeholder="例如：BTC激进策略"
+                            class="w-full input-field rounded px-4 py-2"
+                            maxlength="100"
+                        >
+                    </div>
+
+                    <!-- 交易对选择 -->
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">交易对</label>
+                        <select id="strategySymbol" class="w-full input-field rounded px-4 py-2">
+                            <option value="">加载中...</option>
+                        </select>
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">选择您要交易的币种</div>
+                    </div>
+
+                    <!-- AI 模型选择 -->
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">AI 模型</label>
+                        <select id="strategyModelSelect" class="w-full input-field rounded px-4 py-2">
+                            <option value="">加载中...</option>
+                        </select>
+                    </div>
+
+                    <!-- 执行频率 -->
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">
+                            执行频率（秒）
+                        </label>
+                        <input
+                            type="number"
+                            id="strategyInterval"
+                            placeholder="60"
+                            min="60"
+                            step="60"
+                            class="w-full input-field rounded px-4 py-2"
+                        >
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">最小60秒（1分钟），建议300秒（5分钟）</div>
+                    </div>
+
+                    <!-- 策略描述 -->
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">策略描述（可选）</label>
+                        <input
+                            type="text"
+                            id="strategyDescription"
+                            placeholder="简要说明策略的目标和特点"
+                            class="w-full input-field rounded px-4 py-2"
+                        >
+                    </div>
+
+                    <!-- AI 提示词 -->
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">AI 提示词</label>
+                        <textarea
+                            id="strategyPrompt"
+                            rows="8"
+                            placeholder="你是一个专业的加密货币交易员。请根据市场数据分析并给出交易建议...
+
+示例：
+- 保守策略：只在明确趋势中交易，杠杆不超过2倍，优先风险控制
+- 激进策略：快速捕捉市场波动，可使用5-10倍杠杆，追求高收益
+- 技术分析：基于价格走势、支撑位、阻力位进行分析"
+                            class="w-full input-field rounded px-4 py-2"
+                            style="resize: vertical; min-height: 150px;"
+                        ></textarea>
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">定义AI的交易风格和决策逻辑</div>
+                    </div>
+
+                    <!-- 按钮组 -->
+                    <div class="flex gap-3 pt-2">
+                        <button onclick="hideCreateStrategyModal()" class="flex-1 px-4 py-2.5 rounded font-semibold" style="background-color: var(--bg-secondary); color: var(--text-secondary);">
+                            取消
+                        </button>
+                        <button id="resetStrategyBtn" onclick="resetToDefault()" class="hidden px-4 py-2.5 rounded font-semibold" style="background-color: var(--bg-secondary); color: var(--warning);">
+                            重置
+                        </button>
+                        <button id="saveStrategyBtn" onclick="saveStrategy()" class="flex-1 btn-primary py-2.5 rounded font-semibold">
+                            保存策略
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 项目介绍模态框 -->
+        <div id="aboutModal" class="modal-overlay hidden" onclick="if(event.target === this) hideAboutModal()">
+            <div class="modal-content w-full mx-4" onclick="event.stopPropagation()">
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold">📊 关于 CryptoMindSim</h2>
+                        <button onclick="hideAboutModal()" class="text-3xl" style="color: var(--text-secondary)">&times;</button>
+                    </div>
+
+                    <div class="space-y-4" style="color: var(--text-secondary)">
+                        <section>
+                            <h3 class="text-lg font-semibold mb-2" style="color: var(--text-primary)">✨ 项目简介</h3>
+                            <p>CryptoMindSim 是一个基于人工智能的加密货币模拟交易平台，旨在为用户提供零风险的交易学习环境。通过模拟真实市场行情，结合AI智能决策系统，帮助用户深入理解数字货币交易机制。</p>
+                        </section>
+
+                        <section>
+                            <h3 class="text-lg font-semibold mb-2" style="color: var(--text-primary)">🎯 核心功能</h3>
+                            <ul class="space-y-2 ml-4">
+                                <li>• <strong>实时行情模拟</strong> - 基于真实交易所数据</li>
+                                <li>• <strong>杠杆交易体验</strong> - 支持1-20倍杠杆</li>
+                                <li>• <strong>AI智能策略</strong> - 可配置多种AI交易策略</li>
+                                <li>• <strong>全球排行榜</strong> - 与其他用户竞技交易能力</li>
+                                <li>• <strong>完整交易记录</strong> - 持仓管理与历史追溯</li>
+                                <li>• <strong>风险控制系统</strong> - 自动爆仓保护机制</li>
+                            </ul>
+                        </section>
+
+                        <section>
+                            <h3 class="text-lg font-semibold mb-2" style="color: var(--text-primary)">🛡️ 安全保障</h3>
+                            <p>本平台为<strong>纯模拟环境</strong>，不涉及任何真实资金交易。所有交易均为虚拟操作，用户可以放心学习和实验各种交易策略，无需担心资金损失。</p>
+                        </section>
+
+                        <section>
+                            <h3 class="text-lg font-semibold mb-2" style="color: var(--text-primary)">🚀 技术栈</h3>
+                            <div class="grid grid-cols-2 gap-2 text-sm">
+                                <div>• 后端：FastAPI + Python</div>
+                                <div>• 前端：Tailwind CSS + Chart.js</div>
+                                <div>• 数据库：SQLite + SQLAlchemy</div>
+                                <div>• 行情：CCXT 统一接口</div>
+                                <div>• AI：Claude API 决策引擎</div>
+                                <div>• 部署：Docker 容器化</div>
+                            </div>
+                        </section>
+
+                        <section class="text-center pt-4">
+                            <p class="text-sm">版本 v1.0.0 | © 2024 CryptoMindSim | 仅供学习交流使用</p>
+                        </section>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 使用说明模态框 -->
+        <div id="guideModal" class="modal-overlay hidden" onclick="if(event.target === this) hideGuideModal()">
+            <div class="modal-content w-full mx-4" onclick="event.stopPropagation()">
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold">📖 使用说明</h2>
+                        <button onclick="hideGuideModal()" class="text-3xl" style="color: var(--text-secondary)">&times;</button>
+                    </div>
+
+                    <div class="space-y-6" style="color: var(--text-secondary)">
+                        <section>
+                            <h3 class="text-lg font-semibold mb-3 flex items-center gap-2" style="color: var(--text-primary)">
+                                <span class="badge badge-info">1</span> 注册与登录
+                            </h3>
+                            <ul class="space-y-2 ml-8">
+                                <li>• 点击右上角"登录"按钮</li>
+                                <li>• 输入用户名和密码（首次使用自动注册）</li>
+                                <li>• 新用户将自动获得 <strong>10,000 USDT</strong> 模拟资金</li>
+                            </ul>
+                        </section>
+
+                        <section>
+                            <h3 class="text-lg font-semibold mb-3 flex items-center gap-2" style="color: var(--text-primary)">
+                                <span class="badge badge-info">2</span> AI 决策系统
+                            </h3>
+                            <ul class="space-y-2 ml-8">
+                                <li>• 在"AI决策"标签页查看市场分析</li>
+                                <li>• 选择并激活AI策略配置</li>
+                                <li>• 点击"运行分析"获取AI建议</li>
+                                <li>• 可选择"执行AI交易"自动交易</li>
+                            </ul>
+                        </section>
+
+                        <section>
+                            <h3 class="text-lg font-semibold mb-3 flex items-center gap-2" style="color: var(--text-primary)">
+                                <span class="badge badge-info">3</span> 风险提示
+                            </h3>
+                            <div class="bg-red-500 bg-opacity-10 border border-red-500 rounded p-3">
+                                <p class="font-semibold" style="color: var(--danger)">⚠️ 重要提示</p>
+                                <ul class="mt-2 space-y-1 text-sm">
+                                    <li>• 当持仓亏损达到保证金的 90% 时将触发<strong>强制平仓</strong></li>
+                                    <li>• 高杠杆会放大盈利，同时也会放大亏损</li>
+                                    <li>• 合理分配资金，不要孤注一掷</li>
+                                    <li>• 设置止损点位，控制风险敞口</li>
+                                </ul>
+                            </div>
+                        </section>
+
+                        <section>
+                            <h3 class="text-lg font-semibold mb-3 flex items-center gap-2" style="color: var(--text-primary)">
+                                <span class="badge badge-info">4</span> 排行榜与统计
+                            </h3>
+                            <ul class="space-y-2 ml-8">
+                                <li>• 右侧排行榜显示全平台收益率排名</li>
+                                <li>• ROI（收益率）= (当前总资产 - 初始资金) / 初始资金 × 100%</li>
+                                <li>• 总资产 = 账户余额 + 持仓价值</li>
+                                <li>• 系统统计显示平台实时数据</li>
+                            </ul>
+                        </section>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 常见问题模态框 -->
+        <div id="faqModal" class="modal-overlay hidden" onclick="if(event.target === this) hideFaqModal()">
+            <div class="modal-content w-full mx-4" onclick="event.stopPropagation()">
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold">❓ 常见问题</h2>
+                        <button onclick="hideFaqModal()" class="text-3xl" style="color: var(--text-secondary)">&times;</button>
+                    </div>
+
+                    <div class="space-y-1">
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(0)">
+                                <span>这个平台是真实交易吗？</span>
+                                <span class="faq-icon" id="faq-icon-0">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-0">
+                                <p>不是。CryptoMindSim 是一个<strong>100% 模拟交易平台</strong>，所有交易均为虚拟操作，不涉及任何真实资金。行情数据虽然基于真实交易所，但所有交易行为都在本地数据库中进行，完全无风险。</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(1)">
+                                <span>什么是杠杆交易？</span>
+                                <span class="faq-icon" id="faq-icon-1">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-1">
+                                <p>杠杆交易是指用较小的保证金控制更大价值的资产。例如使用 5 倍杠杆，用 1000 USDT 可以交易价值 5000 USDT 的 BTC。杠杆会同时放大盈利和亏损，需要谨慎使用。</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(2)">
+                                <span>什么时候会触发爆仓？</span>
+                                <span class="faq-icon" id="faq-icon-2">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-2">
+                                <p>当持仓的<strong>未实现亏损达到保证金的 90%</strong> 时，系统会自动强制平仓（爆仓），以防止亏损超过保证金。高杠杆下价格波动幅度较小就可能触发爆仓，请合理控制杠杆倍数。</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(3)">
+                                <span>做多和做空有什么区别？</span>
+                                <span class="faq-icon" id="faq-icon-3">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-3">
+                                <p><strong>做多（LONG）</strong>：看涨时使用，价格上涨则盈利，价格下跌则亏损。<br>
+                                <strong>做空（SHORT）</strong>：看跌时使用，价格下跌则盈利，价格上涨则亏损。</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(4)">
+                                <span>AI 策略是如何工作的？</span>
+                                <span class="faq-icon" id="faq-icon-4">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-4">
+                                <p>平台集成了基于 Claude AI 的决策引擎，可以根据配置的策略提示词（Prompt）分析市场数据，生成交易建议（BUY/SELL/HOLD）。您可以在后台配置不同的策略，系统会定期执行分析并记录决策日志。</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(5)">
+                                <span>如何查看我的历史交易？</span>
+                                <span class="faq-icon" id="faq-icon-5">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-5">
+                                <p>在主面板切换到"交易历史"标签页，可以查看所有已完成的交易记录，包括开仓、平仓、爆仓等操作，以及每笔交易的盈亏情况。</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(6)">
+                                <span>资金用完了怎么办？</span>
+                                <span class="faq-icon" id="faq-icon-6">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-6">
+                                <p>如果您的账户余额归零且无持仓，可以联系管理员重置账户，或者注册一个新账户重新开始。这是模拟平台的优势 —— 可以无限次尝试，不断优化交易策略。</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-item">
+                            <div class="faq-question" onclick="toggleFaq(7)">
+                                <span>数据多久更新一次？</span>
+                                <span class="faq-icon" id="faq-icon-7">▼</span>
+                            </div>
+                            <div class="faq-answer" id="faq-answer-7">
+                                <p>• 价格行情：每 60 秒从交易所拉取最新数据<br>
+                                • 持仓盈亏：实时计算并更新<br>
+                                • 排行榜：每 3 秒刷新一次<br>
+                                • 页面数据：登录后每 3 秒自动刷新</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 交易详情模态框 -->
+        <div id="tradeDetailModal" class="modal-overlay hidden" onclick="if(event.target === this) hideTradeDetail()">
+            <div class="modal-content w-full max-w-4xl mx-4" onclick="event.stopPropagation()" style="max-height: 90vh; overflow-y: auto;">
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold">📊 交易详情</h2>
+                        <button onclick="hideTradeDetail()" class="text-3xl" style="color: var(--text-secondary)">&times;</button>
+                    </div>
+                    <div id="tradeDetailContent">
+                        <!-- 内容将通过 JS 动态加载 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 悬浮帮助按钮组 -->
+        <div class="help-fab">
+            <div class="help-btn" onclick="showAboutModal()" title="项目介绍">
+                ℹ️
+            </div>
+            <div class="help-btn" onclick="showGuideModal()" title="使用说明">
+                📖
+            </div>
+            <div class="help-btn" onclick="showFaqModal()" title="常见问题">
+                ❓
+            </div>
+            <div class="help-btn help-btn-main" onclick="toggleHelpMenu()" title="帮助中心">
+                💡
+            </div>
+        </div>
+
+        <!-- 未登录展示区域 -->
+        <div id="publicContent">
+            <!-- BTC/USDT 实时行情（仅未登录时显示） -->
+            <div class="card rounded-lg p-6 mb-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-bold" id="chartTitle">BTC/USDT 实时行情</h2>
+                    <div class="text-2xl font-mono" id="currentPrice">-</div>
+                </div>
+                <canvas id="priceChart" height="80"></canvas>
+            </div>
+
+            <!-- 项目介绍横幅 -->
+            <div class="card rounded-lg p-6 mb-6">
+                <div class="text-center">
+                    <h2 class="text-3xl font-bold mb-3">📊 CryptoMindSim</h2>
+                    <p class="text-lg mb-4" style="color: var(--text-secondary)">加密货币智能交易模拟平台</p>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+                        <div class="p-4 rounded" style="background-color: var(--bg-secondary)">
+                            <div class="text-2xl mb-2">💰</div>
+                            <div class="font-bold mb-1">初始资金</div>
+                            <div style="color: var(--text-secondary)">10,000 USDT</div>
+                        </div>
+                        <div class="p-4 rounded" style="background-color: var(--bg-secondary)">
+                            <div class="text-2xl mb-2">🤖</div>
+                            <div class="font-bold mb-1">AI 驱动</div>
+                            <div style="color: var(--text-secondary)">智能决策辅助</div>
+                        </div>
+                        <div class="p-4 rounded" style="background-color: var(--bg-secondary)">
+                            <div class="text-2xl mb-2">📈</div>
+                            <div class="font-bold mb-1">实时行情</div>
+                            <div style="color: var(--text-secondary)">真实市场数据</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 币圈前十公链行情 -->
+            <div class="card rounded-lg p-6 mb-6">
+                <h2 class="text-xl font-bold mb-4">🏆 Top 10 加密货币行情</h2>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr style="border-bottom: 1px solid var(--border-color)">
+                                <th class="text-left p-2">排名</th>
+                                <th class="text-left p-2">币种</th>
+                                <th class="text-right p-2">价格 (USDT)</th>
+                                <th class="text-right p-2">24h涨跌幅</th>
+                                <th class="text-right p-2">市值</th>
+                            </tr>
+                        </thead>
+                        <tbody id="topCryptoList">
+                            <tr>
+                                <td colspan="5" class="text-center p-4" style="color: var(--text-secondary)">加载中...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 平台用户排行榜 -->
+            <div class="card rounded-lg p-6 mb-6">
+                <h2 class="text-xl font-bold mb-4">🎖️ 平台用户排行榜</h2>
+                <div id="publicLeaderboard">
+                    <div class="text-center p-4" style="color: var(--text-secondary)">加载中...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 主内容区域 - 仅登录后显示 -->
+        <div id="mainContent" class="hidden">
+            <!-- 顶部统计卡片 -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div class="card rounded-lg p-4">
+                    <div class="text-sm" style="color: var(--text-secondary)">账户余额</div>
+                    <div class="text-2xl font-bold mt-1" id="balance">-</div>
+                </div>
+                <div class="card rounded-lg p-4">
+                    <div class="text-sm" style="color: var(--text-secondary)">持仓总值</div>
+                    <div class="text-2xl font-bold mt-1" id="positionValue">-</div>
+                </div>
+                <div class="card rounded-lg p-4">
+                    <div class="text-sm" style="color: var(--text-secondary)">总资产</div>
+                    <div class="text-2xl font-bold mt-1" id="totalAssets">-</div>
+                </div>
+                <div class="card rounded-lg p-4">
+                    <div class="text-sm" style="color: var(--text-secondary)">收益率</div>
+                    <div class="text-2xl font-bold mt-1" id="roi">-</div>
+                </div>
+            </div>
+
+            <!-- 主内容区 -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- 左侧：操作面板 -->
+                <div class="lg:col-span-2 space-y-6">
+                    <!-- 总资产走势 -->
+                    <div class="card rounded-lg p-6">
+                        <div class="flex justify-between items-center mb-4">
+                            <h2 class="text-xl font-bold" id="assetsChartTitle">总资产走势</h2>
+                            <div class="text-2xl font-mono" id="assetsCurrentValue">-</div>
+                        </div>
+                        <canvas id="assetsChart" height="80"></canvas>
+                    </div>
+
+                    <!-- 标签页导航 -->
+                    <div class="card rounded-lg">
+                        <div class="flex border-b" style="border-color: var(--border-color)">
+                            <button class="tab-button active" onclick="switchTab('strategies')">策略管理</button>
+                            <button class="tab-button" onclick="switchTab('positions')">持仓管理</button>
+                            <button class="tab-button" onclick="switchTab('history')">交易历史</button>
+                        </div>
+
+                        <!-- 策略管理面板 -->
+                        <div id="strategiesTab" class="p-6">
+                            <div class="mb-4">
+                                <div class="flex justify-between items-center mb-3">
+                                    <h3 class="font-bold">我的策略</h3>
+                                    <button onclick="showCreateStrategyModal()" class="btn-primary px-3 py-1.5 rounded text-sm">
+                                        + 创建策略
+                                    </button>
+                                </div>
+                                <div id="strategiesList" class="space-y-3">
+                                    <div class="text-center py-8" style="color: var(--text-secondary)">加载中...</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 持仓管理面板 -->
+                        <div id="positionsTab" class="p-6 hidden">
+                            <div id="positionsList" class="space-y-3">
+                                <div class="text-center py-8" style="color: var(--text-secondary)">暂无持仓</div>
+                            </div>
+                        </div>
+
+                        <!-- 交易历史面板 -->
+                        <div id="historyTab" class="p-6 hidden">
+                            <div id="tradeHistory" class="space-y-2">
+                                <div class="text-center py-8" style="color: var(--text-secondary)">暂无交易记录</div>
+                            </div>
+                            <!-- 分页控件 -->
+                            <div id="tradePagination" class="hidden flex justify-between items-center mt-4 pt-4" style="border-top: 1px solid var(--border-color)">
+                                <div class="text-sm" style="color: var(--text-secondary)">
+                                    <span data-i18n="totalRecords">共</span> <span id="tradeTotalCount">0</span> <span data-i18n="records">条记录</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <button onclick="changeTradeHistoryPage(-1)" id="tradePrevBtn" class="px-3 py-1 rounded text-sm" style="background: var(--bg-primary); border: 1px solid var(--border-color);" disabled>&lt;</button>
+                                    <span class="text-sm" style="color: var(--text-secondary)"><span id="tradeCurrentPage">1</span> / <span id="tradeTotalPages">1</span></span>
+                                    <button onclick="changeTradeHistoryPage(1)" id="tradeNextBtn" class="px-3 py-1 rounded text-sm" style="background: var(--bg-primary); border: 1px solid var(--border-color);">&gt;</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右侧：排行榜和统计 -->
+                <div class="space-y-6">
+                    <!-- 排行榜 -->
+                    <div class="card rounded-lg p-6">
+                        <h2 class="text-xl font-bold mb-4">🏆 排行榜</h2>
+                        <div id="leaderboard" class="space-y-2"></div>
+                    </div>
+
+                    <!-- 系统统计 -->
+                    <div class="card rounded-lg p-6">
+                        <h2 class="text-xl font-bold mb-4">📊 系统统计</h2>
+                        <div class="space-y-3 text-sm">
+                            <div class="flex justify-between">
+                                <span style="color: var(--text-secondary)">总用户数</span>
+                                <span class="font-semibold" id="totalUsers">-</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span style="color: var(--text-secondary)">活跃持仓</span>
+                                <span class="font-semibold" id="totalPositions">-</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span style="color: var(--text-secondary)">总交易数</span>
+                                <span class="font-semibold" id="totalTrades">-</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 风险提示 -->
+                    <div class="card rounded-lg p-4">
+                        <div class="text-sm" style="color: var(--text-secondary)">
+                            <div class="font-semibold mb-2">⚠️ 风险提示</div>
+                            <ul class="space-y-1 text-xs">
+                                <li>• 模拟交易仅供学习</li>
+                                <li>• AI策略自动执行</li>
+                                <li>• 合理控制仓位</li>
+                                <li>• 及时止损止盈</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 页脚 -->
+        <footer>
+            <div class="container mx-auto px-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
+                    <div>
+                        <h4 class="font-bold mb-2" style="color: var(--text-primary)">关于平台</h4>
+                        <p>CryptoMindSim 是一个AI驱动的加密货币模拟交易平台，致力于为用户提供安全、真实的交易学习环境。</p>
+                    </div>
+                    <div>
+                        <h4 class="font-bold mb-2" style="color: var(--text-primary)">快速链接</h4>
+                        <ul class="space-y-1">
+                            <li><a href="javascript:void(0)" onclick="showAboutModal()">项目介绍</a></li>
+                            <li><a href="javascript:void(0)" onclick="showGuideModal()">使用说明</a></li>
+                            <li><a href="javascript:void(0)" onclick="showFaqModal()">常见问题</a></li>
+                            <li><a href="https://github.com" target="_blank">GitHub 仓库</a></li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4 class="font-bold mb-2" style="color: var(--text-primary)">法律声明</h4>
+                        <p class="text-xs">本平台仅供教育和学习用途，所有交易均为模拟操作，不构成任何投资建议。加密货币投资存在高风险,请谨慎决策。</p>
+                    </div>
+                </div>
+                <div class="border-t mt-6 pt-6 text-center text-xs" style="border-color: var(--border-color)">
+                    <p>© 2024 CryptoMindSim. All Rights Reserved. | Made with 💜 for Crypto Enthusiasts</p>
+                    <p class="mt-1">Powered by FastAPI • Claude AI • CCXT • Chart.js</p>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- 引入 JavaScript 模块（按依赖顺序加载） -->
+    <script src="/static/js/global.js"></script>
+    <script src="/static/i18n.js"></script>
+    <script src="/static/js/toast.js"></script>
+    <script src="/static/js/theme.js"></script>
+    <script src="/static/js/modals.js"></script>
+    <script src="/static/js/settings.js"></script>
+    <script src="/static/js/chart.js"></script>
+    <script src="/static/js/strategy.js?v=2"></script>
+    <script src="/static/js/trading.js"></script>
+    <script src="/static/js/data.js"></script>
+    <script src="/static/js/public.js"></script>
+    <script src="/static/js/auth.js"></script>
+    <script src="/static/js/init.js"></script>
+
+</body>
+</html>
