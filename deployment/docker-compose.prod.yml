@@ -4,7 +4,7 @@ services:
   app:
     build:
       context: ..
-      dockerfile: deployment/Dockerfile
+      dockerfile: Dockerfile
     container_name: cryptomindsim-prod
     restart: always
     ports:
