@@ -45,10 +45,8 @@ if not exist ".env" (
 )
 
 REM 初始化数据库和策略
-if not exist "neotrade.db" (
-    echo [4/4] 初始化数据库和默认策略...
-    python -m backend.utils.init_prompts
-)
+echo [4/4] 初始化数据库和默认策略...
+python -m backend.utils.init_prompts
 
 REM 启动服务
 echo.
