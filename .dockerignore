@@ -4,7 +4,7 @@
 .gitattributes
 
 # Docker
-Dockerfile
+deployment/Dockerfile
 docker-compose*.yml
 .dockerignore
 

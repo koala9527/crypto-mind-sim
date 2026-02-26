@@ -5,7 +5,7 @@ services:
     image: registry.cn-shenzhen.aliyuncs.com/koala9527/crypto-mind-sim
     build:
       context: ..
-      dockerfile: deployment/Dockerfile
+      dockerfile: Dockerfile
     container_name: cryptomindsim
     restart: always
     ports:
