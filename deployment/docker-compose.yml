@@ -1,56 +1,38 @@
+version: '3.8'
+
 services:
   app:
+    image: registry.cn-shenzhen.aliyuncs.com/koala9527/crypto-mind-sim
     build:
       context: ..
       dockerfile: deployment/Dockerfile
     container_name: cryptomindsim
-    restart: unless-stopped
+    restart: always
     ports:
-      - "8000:8000"
+      - "8099:8000"
     env_file:
-      - ../.env
-    volumes:
-      - app-data:/app/data
-    depends_on:
-      postgres:
-        condition: service_healthy
-        required: false
-    networks:
-      - cryptomindsim-network
+      - .env
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/stats"]
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/stats', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
-
-  postgres:
-    image: postgres:16-alpine
-    container_name: cryptomindsim-db
-    restart: unless-stopped
-    profiles:
-      - with-db
-    environment:
-      POSTGRES_USER: neotrade
-      POSTGRES_PASSWORD: neotrade_pass
-      POSTGRES_DB: neotrade
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
     networks:
       - cryptomindsim-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U neotrade -d neotrade"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-volumes:
-  app-data:
-  postgres-data:
 
 networks:
   cryptomindsim-network:
