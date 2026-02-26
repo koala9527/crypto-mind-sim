@@ -23,7 +23,6 @@ class StrategyCreate(BaseModel):
     description: Optional[str] = Field(None, description="策略描述")
     prompt_text: str = Field(..., min_length=1, description="AI 提示词")
     symbol: str = Field(default="BTC/USDT", description="交易对")
-    ai_model: str = Field(default="claude-4.5-opus", description="AI 模型")
     execution_interval: int = Field(default=60, ge=60, description="执行频率（秒，最小60秒）")
 
 
@@ -33,7 +32,6 @@ class StrategyUpdate(BaseModel):
     description: Optional[str] = None
     prompt_text: Optional[str] = Field(None, min_length=1)
     symbol: Optional[str] = None
-    ai_model: Optional[str] = None
     execution_interval: Optional[int] = Field(None, ge=60)
     is_active: Optional[bool] = None
 
@@ -161,15 +159,6 @@ async def create_strategy(
     if existing:
         raise HTTPException(status_code=400, detail="您已经有一个策略，请编辑现有策略或删除后再创建")
 
-    # 验证模型是否支持
-    if strategy.ai_model not in AVAILABLE_MODELS:
-        raise HTTPException(status_code=400, detail=f"不支持的模型: {strategy.ai_model}")
-
-    # 验证交易对是否支持
-    supported_symbols = [s["symbol"] for s in AVAILABLE_SYMBOLS]
-    if strategy.symbol not in supported_symbols:
-        raise HTTPException(status_code=400, detail=f"不支持的交易对: {strategy.symbol}")
-
     # 创建策略
     new_strategy = PromptConfig(
         user_id=user_id,
@@ -177,9 +166,9 @@ async def create_strategy(
         description=strategy.description,
         prompt_text=strategy.prompt_text,
         symbol=strategy.symbol,
-        ai_model=strategy.ai_model,
+        ai_model="claude-4.5-opus",  # 占位，实际执行时用用户配置的模型
         execution_interval=strategy.execution_interval,
-        is_active=True  # 默认激活（因为只有一个策略）
+        is_active=True
     )
 
     db.add(new_strategy)
@@ -208,10 +197,6 @@ async def update_strategy(
 
     # 更新字段
     update_data = strategy_update.dict(exclude_unset=True)
-
-    # 验证模型
-    if "ai_model" in update_data and update_data["ai_model"] not in AVAILABLE_MODELS:
-        raise HTTPException(status_code=400, detail=f"不支持的模型: {update_data['ai_model']}")
 
     # 验证交易对
     if "symbol" in update_data:

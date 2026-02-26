@@ -2,6 +2,7 @@
 策略执行定时任务
 """
 import logging
+import re
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from backend.core.database import SessionLocal
@@ -104,7 +105,7 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
                 price=0,
                 quantity=0,
                 leverage=1,
-                trade_type=TradeType.OPEN,
+                trade_type=TradeType.ERROR,
                 market_data=json.dumps({"error": error_message})
             )
             db.add(trade)
@@ -266,7 +267,7 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
                 price=current_price,
                 quantity=0,
                 leverage=1,
-                trade_type=TradeType.OPEN,
+                trade_type=TradeType.ERROR,
                 market_data=json.dumps({
                     "error": error_message,
                     "price": current_price,
@@ -280,8 +281,8 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
         result = await ai_service.chat_completion(
             messages=messages,
             api_key=user.ai_api_key,
-            base_url=user.ai_base_url or "https://api.hodlai.fun/v1",
-            model=strategy.ai_model,
+            base_url=user.ai_base_url or "",
+            model=user.ai_model or "claude-4.5-opus",
             temperature=0.7,
             max_tokens=1000
         )
@@ -290,7 +291,7 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
 
         # 解析 AI 响应
         try:
-            decision = json.loads(content)
+            decision = json.loads(extract_json_from_content(content))
             ai_reasoning = decision.get("reasoning", "")
             decision_action = decision.get("action", "hold").upper()
 
@@ -309,7 +310,6 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
                 action_taken = success
             elif action == "hold":
                 logger.debug(f"策略 {strategy.name} 决策: 持有，不操作")
-                # 记录HOLD决策到交易历史
                 trade = Trade(
                     user_id=user.id,
                     symbol=strategy.symbol,
@@ -317,7 +317,7 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
                     price=current_price,
                     quantity=0,
                     leverage=1,
-                    trade_type=TradeType.OPEN,
+                    trade_type=TradeType.HOLD,
                     market_data=json.dumps({
                         "decision": "HOLD",
                         "reasoning": ai_reasoning,
@@ -337,7 +337,7 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
                     price=current_price,
                     quantity=0,
                     leverage=1,
-                    trade_type=TradeType.OPEN,
+                    trade_type=TradeType.ERROR,
                     market_data=json.dumps({
                         "error": error_message,
                         "price": current_price,
@@ -360,7 +360,7 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
                 price=current_price,
                 quantity=0,
                 leverage=1,
-                trade_type=TradeType.OPEN,
+                trade_type=TradeType.ERROR,
                 market_data=json.dumps({
                     "error": error_message,
                     "ai_response": content,
@@ -404,7 +404,7 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
                     price=error_price,
                     quantity=0,
                     leverage=1,
-                    trade_type=TradeType.OPEN,
+                    trade_type=TradeType.ERROR,
                     market_data=json.dumps({
                         "error": error_message,
                         "exception": str(e)
@@ -428,6 +428,19 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
                 db.commit()
         except Exception:
             db.rollback()
+
+
+def extract_json_from_content(content: str) -> str:
+    """从 AI 响应中提取 JSON，支持 markdown 代码块包裹的情况"""
+    # 尝试提取 ```json ... ``` 或 ``` ... ``` 块
+    match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+    if match:
+        return match.group(1)
+    # 尝试直接找第一个 { ... } 块
+    match = re.search(r'\{.*\}', content, re.DOTALL)
+    if match:
+        return match.group(0)
+    return content
 
 
 def format_price_history(history: list) -> str:

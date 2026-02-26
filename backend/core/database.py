@@ -8,9 +8,9 @@ from backend.core.models import Base
 
 # 创建数据库引擎
 db_url = settings.DATABASE_URL
-# psycopg2: 使用 postgresql+psycopg2:// 前缀
+# psycopg3: 需要 postgresql+psycopg:// 前缀
 if db_url.startswith("postgresql://"):
-    db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
 
 engine = create_engine(
     db_url,

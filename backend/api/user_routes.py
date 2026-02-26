@@ -5,9 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from backend.core.database import get_db
-from backend.core.models import User, Position, Trade, AIDecisionLog, AIConversation, PromptConfig
+from backend.core.models import User, Position, Trade, AIDecisionLog, AIConversation, PromptConfig, AssetHistory
 from backend.core.config import settings
 import logging
 
@@ -19,13 +19,15 @@ router = APIRouter(prefix="/api/users", tags=["Users"])
 class AIConfigUpdate(BaseModel):
     """AI 配置更新"""
     api_key: str = Field(..., min_length=1, description="API Key")
-    base_url: Optional[str] = Field("https://api.hodlai.fun/v1", description="Base URL")
+    base_url: Optional[str] = Field(None, description="Base URL")
+    ai_model: Optional[str] = Field("claude-4.5-opus", description="AI 模型名称")
 
 
 class AIConfigResponse(BaseModel):
     """AI 配置响应"""
     api_key: str
     base_url: str
+    ai_model: str
 
 
 @router.put("/{user_id}/ai-config", response_model=AIConfigResponse)
@@ -46,7 +48,8 @@ async def update_ai_config(
 
     # 更新 AI 配置
     user.ai_api_key = config.api_key
-    user.ai_base_url = config.base_url or "https://api.hodlai.fun/v1"
+    user.ai_base_url = config.base_url or ""
+    user.ai_model = config.ai_model or "claude-4.5-opus"
 
     db.commit()
     db.refresh(user)
@@ -58,7 +61,8 @@ async def update_ai_config(
 
     return AIConfigResponse(
         api_key=masked_key,
-        base_url=user.ai_base_url
+        base_url=user.ai_base_url,
+        ai_model=user.ai_model or "claude-4.5-opus"
     )
 
 
@@ -83,7 +87,8 @@ async def get_ai_config(
         return {
             "configured": True,
             "api_key": masked_key,
-            "base_url": user.ai_base_url or "https://api.hodlai.fun/v1"
+            "base_url": user.ai_base_url or "",
+            "ai_model": user.ai_model or "claude-4.5-opus"
         }
     else:
         return {
@@ -137,6 +142,7 @@ async def reset_user_data(user_id: int, db: Session = Depends(get_db)):
     db.query(AIDecisionLog).filter(AIDecisionLog.user_id == user_id).delete()
     db.query(AIConversation).filter(AIConversation.user_id == user_id).delete()
     db.query(PromptConfig).filter(PromptConfig.user_id == user_id).delete()
+    db.query(AssetHistory).filter(AssetHistory.user_id == user_id).delete()
 
     # 重置余额
     user.balance = settings.INITIAL_BALANCE
@@ -150,4 +156,37 @@ async def reset_user_data(user_id: int, db: Session = Depends(get_db)):
         "message": "数据重置成功",
         "balance": settings.INITIAL_BALANCE,
         "reset_at": datetime.utcnow().isoformat()
+    }
+
+
+@router.get("/{user_id}/asset-history")
+async def get_asset_history(
+    user_id: int,
+    hours: int = 24,
+    db: Session = Depends(get_db)
+):
+    """获取用户总资产历史曲线数据"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    since = datetime.utcnow() - timedelta(hours=hours)
+    records = (
+        db.query(AssetHistory)
+        .filter(AssetHistory.user_id == user_id, AssetHistory.timestamp >= since)
+        .order_by(AssetHistory.timestamp.asc())
+        .all()
+    )
+
+    return {
+        "data": [
+            {
+                "timestamp": r.timestamp.isoformat(),
+                "total_assets": r.total_assets,
+                "balance": r.balance,
+                "position_value": r.position_value,
+            }
+            for r in records
+        ],
+        "initial_balance": user.initial_balance,
     }

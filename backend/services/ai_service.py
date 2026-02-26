@@ -74,7 +74,7 @@ class AIService:
         self,
         messages: List[Dict[str, str]],
         api_key: str,
-        base_url: str = "https://api.hodlai.fun/v1",
+        base_url: str = "",
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None
@@ -117,7 +117,17 @@ class AIService:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(url, json=payload, headers=headers)
                 response.raise_for_status()
-                return response.json()
+                body = response.text.strip()
+                if not body:
+                    raise ValueError(f"AI API 返回空响应 (status={response.status_code})")
+                try:
+                    return response.json()
+                except Exception:
+                    raise ValueError(f"AI API 返回非 JSON 内容 (status={response.status_code}): {body[:200]}")
+        except httpx.HTTPStatusError as e:
+            body = e.response.text[:500] if e.response else ""
+            logger.error(f"AI API HTTP 错误 {e.response.status_code}: {body}")
+            raise
         except httpx.HTTPError as e:
             logger.error(f"AI API 调用失败: {e}")
             raise
@@ -128,7 +138,7 @@ class AIService:
         price_history: List[Dict],
         user_positions: List[Dict],
         api_key: str,
-        base_url: str = "https://api.hodlai.fun/v1",
+        base_url: str = "",
         model: Optional[str] = None
     ) -> Dict:
         """
@@ -211,7 +221,7 @@ class AIService:
         market_data: Dict,
         user_balance: float,
         api_key: str,
-        base_url: str = "https://api.hodlai.fun/v1",
+        base_url: str = "",
         risk_tolerance: str = "medium",
         model: Optional[str] = None
     ) -> Dict:

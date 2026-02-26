@@ -28,7 +28,7 @@ class MarketAnalysisRequest(BaseModel):
     """市场分析请求"""
     user_id: int
     api_key: str
-    base_url: str = "https://api.hodlai.fun/v1"
+    base_url: str = ""
     model: Optional[str] = None
 
 
@@ -45,7 +45,7 @@ class TradingAdviceRequest(BaseModel):
     """交易建议请求"""
     user_id: int
     api_key: str
-    base_url: str = "https://api.hodlai.fun/v1"
+    base_url: str = ""
     risk_tolerance: str = "medium"
     model: Optional[str] = None
 

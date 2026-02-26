@@ -1,16 +1,37 @@
 """
 重置数据库脚本
-重置 PostgreSQL 数据库结构
+删除旧数据库并创建新的数据库结构
 """
+import os
 import sys
 
 # 设置 UTF-8 编码
 if sys.platform == 'win32':
+    import locale
     if sys.stdout.encoding != 'utf-8':
         sys.stdout.reconfigure(encoding='utf-8')
 
+# 数据库文件路径
+DB_FILE = "neotrade.db"
+
 def reset_database():
     """重置数据库"""
+    # 检查数据库文件是否存在
+    if os.path.exists(DB_FILE):
+        try:
+            os.remove(DB_FILE)
+            print(f"✓ 已删除旧数据库文件: {DB_FILE}")
+        except PermissionError:
+            print(f"✕ 无法删除数据库文件，可能正在被使用")
+            print("  请先停止应用，然后重试")
+            return False
+        except Exception as e:
+            print(f"✕ 删除数据库失败: {e}")
+            return False
+    else:
+        print(f"ℹ 数据库文件不存在，将创建新数据库")
+
+    # 导入数据库模块
     try:
         from backend.core.database import init_db
         print("✓ 正在创建新数据库...")

@@ -5,11 +5,10 @@ const updateStrategies = (...args) => updatePrompts(...args);
 
 // 更新所有数据
 async function updateData() {
+    // 只有登录后才更新用户相关数据
     if (currentUser) {
-        // 登录后：获取 BTC 价格（用于保证金计算）+ 显示总资产图表 + 用户数据
         await Promise.all([
-            fetchBtcPrice(),
-            updateAssetsChart(),
+            updatePriceChart(),
             updateUserInfo(),
             updatePositions(),
             updateLeaderboard(),
@@ -18,23 +17,11 @@ async function updateData() {
         ]);
         updateEstimatedMargin();
     } else {
-        // 未登录：显示 BTC 行情
-        await updatePriceChart();
+        // 游客模式只更新排行榜和统计
         await Promise.all([
             updateLeaderboard(),
             updateStats()
         ]);
-    }
-}
-
-// 获取最新 BTC 价格（登录后用于保证金计算）
-async function fetchBtcPrice() {
-    try {
-        const response = await fetch('/api/price/current');
-        const data = await response.json();
-        latestBtcPrice = data.price;
-    } catch (error) {
-        console.error('获取BTC价格失败:', error);
     }
 }
 
@@ -80,17 +67,13 @@ function updateEstimatedMargin() {
         const leverageInput = document.getElementById('leverageInput');
         const estimatedMarginElement = document.getElementById('estimatedMargin');
 
-        // 检查所有必需的元素是否存在
-        if (!quantityInput || !leverageInput || !estimatedMarginElement) {
-            return;
-        }
+        if (!quantityInput || !leverageInput || !estimatedMarginElement) return;
+        if (!latestBtcPrice) return;
 
-        // 使用全局 BTC 价格变量
-        const currentPrice = latestBtcPrice || 0;
         const quantity = parseFloat(quantityInput.value) || 0;
         const leverage = parseFloat(leverageInput.value) || 1;
 
-        const margin = (currentPrice * quantity) / leverage;
+        const margin = (latestBtcPrice * quantity) / leverage;
         estimatedMarginElement.textContent = margin.toFixed(2) + ' USDT';
     } catch (error) {
         console.error('计算保证金失败:', error);
@@ -175,25 +158,47 @@ async function updateTradeHistory() {
 
         const trades = result.trades;
         container.innerHTML = trades.map(t => {
-            const typeClass = t.trade_type === 'OPEN' ? 'badge-info' : 'badge-warning';
-            const pnlClass = t.pnl >= 0 ? 'profit' : 'loss';
             const date = new Date(t.created_at).toLocaleString('zh-CN');
+            const pnlClass = t.pnl >= 0 ? 'profit' : 'loss';
+
+            // 解析 market_data 获取操作概况
+            let summary = '';
+            let statusBadge = '';
+            try {
+                const md = t.market_data ? JSON.parse(t.market_data) : {};
+                if (md.error) {
+                    statusBadge = '<span class="badge badge-danger text-xs">异常</span>';
+                    summary = md.error.slice(0, 60);
+                } else if (md.decision === 'HOLD') {
+                    statusBadge = '<span class="badge badge-warning text-xs">HOLD</span>';
+                    const reason = md.reasoning || '';
+                    summary = reason.slice(0, 60) + (reason.length > 60 ? '…' : '');
+                } else if (t.trade_type === 'OPEN') {
+                    statusBadge = `<span class="badge badge-success text-xs">开仓 ${t.side} ${t.leverage}x</span>`;
+                    summary = `${t.symbol} · 数量 ${t.quantity}`;
+                } else if (t.trade_type === 'CLOSE') {
+                    statusBadge = `<span class="badge badge-info text-xs">平仓</span>`;
+                    summary = `${t.symbol} · 盈亏 ${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)} USDT`;
+                } else {
+                    statusBadge = `<span class="badge badge-info text-xs">${t.trade_type}</span>`;
+                    summary = t.symbol;
+                }
+            } catch (_) {
+                statusBadge = `<span class="badge badge-info text-xs">${t.trade_type}</span>`;
+                summary = t.symbol;
+            }
+
             return `
                 <div class="card rounded p-3 text-sm hover:shadow-lg transition cursor-pointer" onclick="showTradeDetail(${t.id})">
-                    <div class="flex justify-between items-center">
+                    <div class="flex justify-between items-center mb-1">
                         <div class="flex items-center gap-2">
-                            <span class="badge ${typeClass}">${t.trade_type}</span>
+                            ${statusBadge}
                             <span class="font-semibold">${t.symbol}</span>
-                            <span style="color: var(--text-secondary)">${t.side} ${t.leverage}x</span>
                         </div>
-                        <div class="text-right">
-                            <div class="font-semibold">${t.price.toFixed(2)}</div>
-                            ${t.pnl !== 0 ? `<div class="${pnlClass}">${t.pnl.toFixed(2)} USDT</div>` : ''}
-                        </div>
+                        ${t.pnl !== 0 ? `<div class="font-semibold ${pnlClass}">${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)} USDT</div>` : ''}
                     </div>
-                    <div class="mt-2 text-xs" style="color: var(--text-secondary)">
-                        ${date}
-                    </div>
+                    ${summary ? `<div class="text-xs mb-1" style="color: var(--text-secondary)">${summary}</div>` : ''}
+                    <div class="text-xs" style="color: var(--text-secondary)">${date}</div>
                 </div>
             `;
         }).join('');
@@ -301,6 +306,25 @@ async function updatePrompts() {
 
         // 显示唯一的策略
         const p = promptsArray[0];
+
+        // 拉最近一条 AI 决策
+        let lastDecision = null;
+        try {
+            const decRes = await fetch(`/api/users/${userId}/ai-decisions?limit=1`);
+            if (decRes.ok) {
+                const decs = await decRes.json();
+                if (decs.length > 0) lastDecision = decs[0];
+            }
+        } catch (_) {}
+
+        const decisionBadge = lastDecision ? (() => {
+            const d = lastDecision.decision;
+            const time = new Date(lastDecision.created_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+            const colorMap = { HOLD: 'badge-warning', OPEN: 'badge-success', CLOSE: 'badge-danger' };
+            const cls = colorMap[d] || 'badge-info';
+            return `<span class="badge ${cls} text-xs">${d}</span><span class="text-xs ml-1" style="color:var(--text-secondary)">${time}</span>`;
+        })() : '';
+
         container.innerHTML = `
             <div class="card rounded p-4">
                 <div class="flex justify-between items-start mb-3">
@@ -310,10 +334,10 @@ async function updatePrompts() {
                             ${p.is_active ? '<span class="badge badge-success text-xs">✓ 运行中</span>' : '<span class="badge badge-warning text-xs">已停用</span>'}
                         </div>
                         ${p.description ? `<div class="text-sm mb-2" style="color: var(--text-secondary)">${p.description}</div>` : ''}
-                        <div class="flex gap-3 text-xs" style="color: var(--text-secondary)">
+                        <div class="flex gap-3 text-xs flex-wrap" style="color: var(--text-secondary)">
                             <span>📊 ${p.symbol || 'BTC/USDT'}</span>
-                            <span>🤖 ${p.ai_model || 'claude-4.5-opus'}</span>
                             <span>⏱️ ${p.execution_interval || 60}秒</span>
+                            ${decisionBadge ? `<span>最近决策: ${decisionBadge}</span>` : ''}
                         </div>
                     </div>
                 </div>

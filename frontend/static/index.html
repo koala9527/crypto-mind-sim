@@ -295,13 +295,6 @@
             }
         }
 
-        /* 顶部导航栏 */
-        .navbar {
-            background-color: var(--bg-secondary);
-            border-bottom: 1px solid var(--border-color);
-            transition: background-color 0.3s ease, border-color 0.3s ease;
-        }
-
         /* 页脚样式 */
         footer {
             margin-top: 4rem;
@@ -403,14 +396,14 @@
     <!-- 通知容器 -->
     <div id="toastContainer" class="toast-container"></div>
 
-    <div class="">
+    <div class="container mx-auto px-4 py-6">
         <!-- 头部 -->
-        <header class="navbar p-4 mb-3 flex justify-between items-center">
+        <header class="mb-8 flex justify-between items-center">
             <div>
-                <h1 class="text-2xl font-bold" style="color: var(--text-primary);" data-i18n="title">
+                <h1 class="text-3xl font-bold" style="color: var(--text-primary);" data-i18n="title">
                     📊 CryptoMindSim
                 </h1>
-                <p class="text-xs mt-1" style="color: var(--text-secondary);" data-i18n="subtitle">
+                <p class="text-sm" style="color: var(--text-secondary);" data-i18n="subtitle">
                     加密货币智能交易模拟平台 · 初始资金 10,000 USDT
                 </p>
             </div>
@@ -492,6 +485,8 @@
                             placeholder="sk-xxxxxxxxxxxxxxxx"
                             class="w-full input-field rounded px-4 py-2"
                         >
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">
+                            API Key 将保存在浏览器本地，不会上传到服务器
                         </div>
                     </div>
 
@@ -502,12 +497,27 @@
                         <input
                             type="text"
                             id="baseUrlInput"
-                            placeholder="https://api.hodlai.fun/v1"
+                            placeholder="https://api.openai.com/v1"
                             class="w-full input-field rounded px-4 py-2"
-                            value="https://api.hodlai.fun/v1"
                         >
                         <div class="text-xs mt-1" style="color: var(--text-secondary)">
-                            默认使用 https://api.hodlai.fun/v1
+                            填写 API 服务地址
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">
+                            🤖 AI 模型
+                        </label>
+                        <input
+                            type="text"
+                            id="aiModelInput"
+                            placeholder="claude-4.5-opus"
+                            class="w-full input-field rounded px-4 py-2"
+                            value="claude-4.5-opus"
+                        >
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">
+                            填写模型名称，例如 claude-4.5-opus、gpt-4o
                         </div>
                     </div>
 
@@ -521,6 +531,10 @@
                             </ul>
                         </div>
                     </div>
+
+                    <button onclick="testAIConfig()" id="testAIBtn" class="w-full py-3 rounded font-semibold" style="background-color: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color)">
+                        测试连接
+                    </button>
 
                     <button onclick="saveSettings()" class="w-full btn-primary py-3 rounded font-semibold">
                         保存配置
@@ -581,29 +595,8 @@
                         <div class="text-xs mt-1" style="color: var(--text-secondary)">选择您要交易的币种</div>
                     </div>
 
-                    <!-- AI 模型选择 -->
-                    <div>
-                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">AI 模型</label>
-                        <select id="strategyModelSelect" class="w-full input-field rounded px-4 py-2">
-                            <option value="">加载中...</option>
-                        </select>
-                    </div>
-
-                    <!-- 执行频率 -->
-                    <div>
-                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">
-                            执行频率（秒）
-                        </label>
-                        <input
-                            type="number"
-                            id="strategyInterval"
-                            placeholder="60"
-                            min="60"
-                            step="60"
-                            class="w-full input-field rounded px-4 py-2"
-                        >
-                        <div class="text-xs mt-1" style="color: var(--text-secondary)">最小60秒（1分钟），建议300秒（5分钟）</div>
-                    </div>
+                    <!-- 执行频率（固定60秒，隐藏） -->
+                    <input type="hidden" id="strategyInterval" value="60">
 
                     <!-- 策略描述 -->
                     <div>
@@ -897,15 +890,6 @@
 
         <!-- 未登录展示区域 -->
         <div id="publicContent">
-            <!-- BTC/USDT 实时行情（仅未登录时显示） -->
-            <div class="card rounded-lg p-6 mb-6">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-bold" id="chartTitle">BTC/USDT 实时行情</h2>
-                    <div class="text-2xl font-mono" id="currentPrice">-</div>
-                </div>
-                <canvas id="priceChart" height="80"></canvas>
-            </div>
-
             <!-- 项目介绍横幅 -->
             <div class="card rounded-lg p-6 mb-6">
                 <div class="text-center">
@@ -987,15 +971,15 @@
 
             <!-- 主内容区 -->
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <!-- 左侧：操作面板 -->
+                <!-- 左侧：价格图表 + 操作面板 -->
                 <div class="lg:col-span-2 space-y-6">
-                    <!-- 总资产走势 -->
+                    <!-- 价格图表 -->
                     <div class="card rounded-lg p-6">
                         <div class="flex justify-between items-center mb-4">
-                            <h2 class="text-xl font-bold" id="assetsChartTitle">总资产走势</h2>
-                            <div class="text-2xl font-mono" id="assetsCurrentValue">-</div>
+                            <h2 class="text-xl font-bold">总资产曲线</h2>
+                            <div class="text-sm text-gray-500" id="currentPrice"></div>
                         </div>
-                        <canvas id="assetsChart" height="80"></canvas>
+                        <canvas id="priceChart" height="80"></canvas>
                     </div>
 
                     <!-- 标签页导航 -->
@@ -1126,12 +1110,12 @@
     <script src="/static/i18n.js"></script>
     <script src="/static/js/toast.js"></script>
     <script src="/static/js/theme.js"></script>
-    <script src="/static/js/modals.js"></script>
-    <script src="/static/js/settings.js"></script>
-    <script src="/static/js/chart.js"></script>
-    <script src="/static/js/strategy.js?v=2"></script>
+    <script src="/static/js/modals.js?v=2"></script>
+    <script src="/static/js/settings.js?v=2"></script>
+    <script src="/static/js/chart.js?v=3"></script>
+    <script src="/static/js/strategy.js?v=4"></script>
     <script src="/static/js/trading.js"></script>
-    <script src="/static/js/data.js"></script>
+    <script src="/static/js/data.js?v=3"></script>
     <script src="/static/js/public.js"></script>
     <script src="/static/js/auth.js"></script>
     <script src="/static/js/init.js"></script>

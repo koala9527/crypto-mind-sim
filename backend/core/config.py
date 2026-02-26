@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # AI 配置 (只需要两个参数)
     AI_API_KEY: str = ""
-    AI_BASE_URL: str = "https://api.hodlai.fun/v1"
+    AI_BASE_URL: str = ""
 
     class Config:
         env_file = ".env"

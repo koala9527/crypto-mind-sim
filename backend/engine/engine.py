@@ -36,7 +36,6 @@ class TradingEngine:
             self.exchange = exchange_class(
                 {
                     "enableRateLimit": True,
-                    "options": {"defaultType": "future"},
                 }
             )
             logger.info(f"成功连接到交易所: {settings.EXCHANGE}")

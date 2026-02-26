@@ -21,7 +21,7 @@ from backend.core.models import (
     TradeType,
     AIDecisionLog,
     AIConversation,
-    MarketPrice,
+    AssetHistory,
 )
 from backend.engine.engine import trading_engine
 from backend.core.config import settings
@@ -245,6 +245,24 @@ def scheduled_price_update():
 
         # 检查爆仓（所有交易对）
         trading_engine.check_liquidation(db)
+
+        # 记录所有用户的总资产快照
+        users = db.query(User).all()
+        for user in users:
+            open_positions = db.query(Position).filter(
+                Position.user_id == user.id,
+                Position.is_open == True
+            ).all()
+            position_value = sum(p.margin + p.unrealized_pnl for p in open_positions)
+            total_assets = user.balance + position_value
+            snapshot = AssetHistory(
+                user_id=user.id,
+                total_assets=total_assets,
+                balance=user.balance,
+                position_value=position_value,
+            )
+            db.add(snapshot)
+        db.commit()
 
     except Exception as e:
         logger.error(f"定时任务执行失败: {e}")
@@ -868,60 +886,6 @@ def get_top_crypto(db: Session = Depends(get_db)):
 # ---------- 系统统计 ----------
 
 
-@app.get("/api/users/{user_id}/assets-history")
-def get_assets_history(user_id: int, db: Session = Depends(get_db)):
-    """获取用户资产历史（基于交易记录重建）"""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="用户不存在")
-
-    # 获取所有有效交易（quantity > 0 的真实交易）
-    trades = (
-        db.query(Trade)
-        .filter(Trade.user_id == user_id, Trade.quantity > 0)
-        .order_by(Trade.created_at.asc())
-        .all()
-    )
-
-    data_points = []
-
-    # 起始点：注册时间 + 初始资金
-    data_points.append({
-        "timestamp": str(user.created_at),
-        "total_assets": user.initial_balance
-    })
-
-    # 通过交易记录重建资产变化
-    running_assets = user.initial_balance
-    for trade in trades:
-        if trade.trade_type == TradeType.CLOSE and trade.pnl != 0:
-            # 平仓交易：资产变化 = 盈亏
-            running_assets += trade.pnl
-        elif trade.trade_type == TradeType.OPEN:
-            # 开仓不改变总资产（余额减少，持仓增加）
-            pass
-
-        data_points.append({
-            "timestamp": str(trade.created_at),
-            "total_assets": round(running_assets, 2)
-        })
-
-    # 当前快照
-    positions = db.query(Position).filter(
-        Position.user_id == user_id,
-        Position.is_open == True
-    ).all()
-    position_value = sum(p.margin + p.unrealized_pnl for p in positions)
-    current_total = user.balance + position_value
-
-    data_points.append({
-        "timestamp": str(datetime.utcnow()),
-        "total_assets": round(current_total, 2)
-    })
-
-    return {"data": data_points}
-
-
 @app.get("/api/stats", response_model=StatsResponse)
 def get_stats(db: Session = Depends(get_db)):
     """获取系统统计信息"""
@@ -1024,15 +988,11 @@ async def create_conversation(
 
         position_value = sum(p.margin + p.unrealized_pnl for p in positions)
         total_assets = user.balance + position_value
-        roi = ((total_assets - user.initial_balance) / user.initial_balance) * 100 if user.initial_balance > 0 else 0
 
         user_context = {
             "balance": user.balance,
             "position_count": len(positions),
-            "total_assets": total_assets,
-            "roi": roi,
-            "initial_balance": user.initial_balance,
-            "position_value": position_value
+            "total_assets": total_assets
         }
 
         # 调用 Claude AI

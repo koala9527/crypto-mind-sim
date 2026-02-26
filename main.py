@@ -10,5 +10,7 @@ if __name__ == "__main__":
         "backend.core.main:app",
         host=settings.HOST,
         port=settings.PORT,
-        reload=True  # 开发模式下启用热重载
+        reload=True,
+        log_level="warning",          # 屏蔽 uvicorn access log (INFO)
+        access_log=False,             # 关闭每条请求的 access log
     )

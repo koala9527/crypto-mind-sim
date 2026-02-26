@@ -104,12 +104,8 @@ async function onPresetStrategyChange() {
     const strategy = presetStrategies[parseInt(selectedIndex)];
     if (!strategy) return;
 
-    // 填充表单
-    // 如果当前正在编辑已有策略，保留其 id 以便保存时走 PUT 更新
-    // 只有在没有编辑已有策略时才清空（新建模式）
-    if (!currentEditingPrompt || !currentEditingPrompt.id) {
-        currentEditingPrompt = null;
-    }
+    // 填充表单（这是预设模板，不是用户的策略）
+    currentEditingPrompt = null; // 清空当前编辑的策略，因为这是新建
     fillStrategyForm(strategy);
 
     // 显示保存按钮，隐藏重置按钮（因为这是新建，还没保存）
@@ -122,16 +118,7 @@ function fillStrategyForm(strategy) {
     document.getElementById('strategyName').value = strategy.name || '';
     document.getElementById('strategyDescription').value = strategy.description || '';
     document.getElementById('strategyPrompt').value = strategy.prompt_text || '';
-
-    // 如果是用户已保存的策略（有 ai_model 字段），则填充所有字段
-    if (strategy.ai_model) {
-        document.getElementById('strategyModelSelect').value = strategy.ai_model;
-        document.getElementById('strategySymbol').value = strategy.symbol || 'BTC/USDT';
-    } else {
-        // 如果是预设模板（没有 ai_model 字段），则使用默认值
-        document.getElementById('strategyModelSelect').value = '';
-        document.getElementById('strategySymbol').value = 'BTC/USDT';
-    }
+    document.getElementById('strategySymbol').value = strategy.symbol || 'BTC/USDT';
 
     // 显示保存按钮
     document.getElementById('saveStrategyBtn').classList.remove('hidden');
@@ -148,12 +135,10 @@ function fillStrategyForm(strategy) {
 function clearStrategyForm() {
     document.getElementById('strategyName').value = '';
     document.getElementById('strategyDescription').value = '';
-    document.getElementById('strategyModelSelect').value = '';
     document.getElementById('strategySymbol').value = 'BTC/USDT';
     document.getElementById('strategyPrompt').value = '';
     currentEditingPrompt = null;
 
-    // 隐藏重置按钮，显示保存按钮
     document.getElementById('resetStrategyBtn').classList.add('hidden');
     document.getElementById('saveStrategyBtn').classList.remove('hidden');
 }
@@ -162,17 +147,11 @@ function clearStrategyForm() {
 async function saveStrategy() {
     const name = document.getElementById('strategyName').value.trim();
     const description = document.getElementById('strategyDescription').value.trim();
-    const ai_model = document.getElementById('strategyModelSelect').value;
     const symbol = document.getElementById('strategySymbol').value;
     const prompt_text = document.getElementById('strategyPrompt').value.trim();
 
     if (!name) {
         showToast(t('strategyNameRequired'), 'warning');
-        return;
-    }
-
-    if (!ai_model) {
-        showToast(t('modelRequired'), 'warning');
         return;
     }
 
@@ -190,7 +169,6 @@ async function saveStrategy() {
     const strategyData = {
         name,
         description,
-        ai_model,
         symbol,
         prompt_text,
         execution_interval: 60
@@ -298,7 +276,6 @@ function showCreateStrategyModal() {
         modal.classList.remove('hidden');
         clearStrategyForm();
         loadAvailableSymbols();
-        loadAvailableModels();
         loadPresetStrategies();
     }
 }
@@ -319,18 +296,8 @@ async function editStrategy(strategyId) {
         const response = await fetch(`/api/strategies/${strategyId}?user_id=${userId}`);
         if (response.ok) {
             const strategy = await response.json();
-
-            // 直接打开模态框，不调用 showCreateStrategyModal 以避免 clearStrategyForm 清除 currentEditingPrompt
-            const modal = document.getElementById('createStrategyModal');
-            if (modal) {
-                modal.classList.remove('hidden');
-            }
-            await loadAvailableSymbols();
-            await loadAvailableModels();
-            await loadPresetStrategies();
-
-            // 设置编辑状态和填充表单
-            currentEditingPrompt = strategy;
+            showCreateStrategyModal();
+            currentEditingPrompt = strategy; // 在 showCreateStrategyModal 清空表单后再赋值
             fillStrategyForm(strategy);
 
             // 尝试匹配预设策略下拉框
