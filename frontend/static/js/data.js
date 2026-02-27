@@ -3,6 +3,27 @@
 // updateStrategies 是 updatePrompts 的别名
 const updateStrategies = (...args) => updatePrompts(...args);
 
+// 手动刷新按钮
+async function refreshData() {
+    const btn = document.getElementById('refreshBtn');
+    const icon = document.getElementById('refreshIcon');
+    if (btn) btn.disabled = true;
+    if (icon) icon.classList.add('spinning');
+    await updateData();
+    if (icon) icon.classList.remove('spinning');
+    if (btn) btn.disabled = false;
+}
+
+function updateRefreshTime() {
+    const el = document.getElementById('lastRefreshTime');
+    if (!el) return;
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    el.textContent = `上次刷新 ${hh}:${mm}:${ss}`;
+}
+
 // 更新所有数据
 async function updateData() {
     // 只有登录后才更新用户相关数据
@@ -23,6 +44,7 @@ async function updateData() {
             updateStats()
         ]);
     }
+    updateRefreshTime();
 }
 
 // 更新用户信息

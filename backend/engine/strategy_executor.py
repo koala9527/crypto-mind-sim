@@ -117,6 +117,8 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
     ai_reasoning = None
     decision_action = "HOLD"
     action_taken = False
+    user = None
+    current_price = 0
 
     try:
         # 获取用户信息
@@ -136,7 +138,7 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
 
         if not market_data:
             error_message = f"无法获取 {strategy.symbol} 的市场数据"
-            logger.warning(error_message)
+            logger.error(error_message)
             # 记录错误到交易历史
             trade = Trade(
                 user_id=user.id,
@@ -298,7 +300,7 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
         # 调用 AI（需要用户的 API 配置）
         if not user.ai_api_key:
             error_message = f"用户 {user.username} 未配置 API Key"
-            logger.warning(error_message)
+            logger.error(error_message)
             # 记录错误
             trade = Trade(
                 user_id=user.id,
@@ -426,10 +428,12 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
         db.commit()
 
     except Exception as e:
-        error_message = f"执行策略失败: {str(e)}"
+        exc_type = type(e).__name__
+        exc_detail = str(e).strip()
+        error_message = f"执行策略失败: [{exc_type}] {exc_detail}" if exc_detail else f"执行策略失败: [{exc_type}]"
         logger.error(
             f"策略 {strategy.name if strategy else 'Unknown'} {error_message}\n"
-            f"  错误类型: {type(e).__name__}\n"
+            f"  错误类型: {exc_type}\n"
             f"  策略ID: {strategy.id if strategy else 'N/A'}\n"
             f"  用户ID: {strategy.user_id if strategy else 'N/A'}",
             exc_info=True
@@ -440,20 +444,18 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
         # 记录异常到交易历史和决策日志
         try:
             if user and strategy:
-                # 尝试获取当前价格
-                error_price = current_price if 'current_price' in dir() else 0
-
                 trade = Trade(
                     user_id=user.id,
                     symbol=strategy.symbol,
                     side=TradeSide.BUY,
-                    price=error_price,
+                    price=current_price,
                     quantity=0,
                     leverage=1,
                     trade_type=TradeType.ERROR,
                     market_data=json.dumps({
                         "error": error_message,
-                        "exception": str(e)
+                        "exception_type": exc_type,
+                        "exception": exc_detail
                     })
                 )
                 db.add(trade)
@@ -472,7 +474,8 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
                 strategy.last_executed_at = get_local_time()
 
                 db.commit()
-        except Exception:
+        except Exception as e:
+            logger.error(f"策略 {strategy.name if strategy else 'unknown'} 异常记录入库失败: {e}")
             db.rollback()
 
 
@@ -565,7 +568,7 @@ async def execute_open_position(db: Session, user: User, strategy: PromptConfig,
         # 检查余额是否足够
         if user.balance < margin:
             error_msg = f"余额不足 (需要 ${margin:.2f}, 可用 ${user.balance:.2f})"
-            logger.warning(f"策略 {strategy.name} 开仓失败: {error_msg}")
+            logger.error(f"策略 {strategy.name} 开仓失败: {error_msg}")
 
             # 记录失败到交易历史
             market_data_json = json.dumps({
@@ -664,8 +667,9 @@ async def execute_open_position(db: Session, user: User, strategy: PromptConfig,
             )
             db.add(trade)
             db.commit()
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"策略 {strategy.name} 开仓失败记录入库失败: {e}")
+            db.rollback()
 
         db.rollback()
         return False
@@ -798,8 +802,9 @@ async def execute_close_positions(db: Session, user: User, strategy: PromptConfi
             )
             db.add(trade)
             db.commit()
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"策略 {strategy.name} 平仓失败记录入库失败: {e}")
+            db.rollback()
 
         db.rollback()
         return False

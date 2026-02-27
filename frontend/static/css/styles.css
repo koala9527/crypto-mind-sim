@@ -73,6 +73,26 @@ body {
     background-color: var(--accent-hover);
 }
 
+.btn-secondary {
+    background-color: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    transition: background-color 0.2s ease;
+}
+
+.btn-secondary:hover {
+    background-color: var(--border-color);
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.spinning {
+    animation: spin 0.7s linear infinite;
+}
+
 .theme-toggle {
     cursor: pointer;
     padding: 0.5rem;
