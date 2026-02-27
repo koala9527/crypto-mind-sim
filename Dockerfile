@@ -1,5 +1,5 @@
 # 使用轻量级 Python 基础镜像（使用较旧的稳定版本）
-FROM python:3.11.8-slim
+FROM swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/python:3.11.8-slim
 
 # 设置工作目录
 WORKDIR /app
