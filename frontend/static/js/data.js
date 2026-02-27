@@ -336,7 +336,7 @@ async function updatePrompts() {
                         ${p.description ? `<div class="text-sm mb-2" style="color: var(--text-secondary)">${p.description}</div>` : ''}
                         <div class="flex gap-3 text-xs flex-wrap" style="color: var(--text-secondary)">
                             <span>📊 ${p.symbol || 'BTC/USDT'}</span>
-                            <span>⏱️ ${p.execution_interval || 60}秒</span>
+                            <span>⏱️ ${p.execution_interval || 1}分钟</span>
                             ${decisionBadge ? `<span>最近决策: ${decisionBadge}</span>` : ''}
                         </div>
                     </div>

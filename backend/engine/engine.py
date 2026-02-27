@@ -16,6 +16,7 @@ from backend.core.models import (
     TradeType,
     AIDecisionLog,
     AIConversation,
+    get_local_time,
 )
 from backend.core.config import settings
 
@@ -437,7 +438,7 @@ class TradingEngine:
 
             # 更新持仓状态
             position.is_open = False
-            position.closed_at = datetime.utcnow()
+            position.closed_at = get_local_time()
 
             # 记录交易历史
             trade = Trade(
@@ -453,7 +454,7 @@ class TradingEngine:
             db.add(trade)
 
             # 更新用户余额（保证金已被扣除，无需操作）
-            user.updated_at = datetime.utcnow()
+            user.updated_at = get_local_time()
 
             logger.warning(
                 f"用户 {user.username} 的持仓已爆仓: {position.symbol} "
@@ -552,7 +553,7 @@ class TradingEngine:
         from datetime import timedelta
 
         try:
-            cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+            cutoff_time = get_local_time() - timedelta(hours=hours)
             prices = (
                 db.query(MarketPrice)
                 .filter(

@@ -15,8 +15,15 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
 import enum
+import pytz
 
 Base = declarative_base()
+
+
+def get_local_time():
+    """获取本地时区的当前时间（+8时区）"""
+    tz = pytz.timezone('Asia/Shanghai')
+    return datetime.now(tz).replace(tzinfo=None)
 
 
 class TradeSide(str, enum.Enum):
@@ -51,9 +58,9 @@ class User(Base):
     ai_api_key = Column(String(200), nullable=True)
     ai_base_url = Column(String(200), nullable=True)
     ai_model = Column(String(100), nullable=True, default="claude-4.5-opus")
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=get_local_time, nullable=False)
     updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=get_local_time, onupdate=get_local_time, nullable=False
     )
 
     positions = relationship("Position", back_populates="user", cascade="all, delete-orphan")
@@ -79,7 +86,7 @@ class Position(Base):
     unrealized_pnl = Column(Float, default=0.0, nullable=False)
     is_open = Column(Boolean, default=True, nullable=False)
     liquidation_price = Column(Float, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=get_local_time, nullable=False)
     closed_at = Column(DateTime, nullable=True)
 
     user = relationship("User", back_populates="positions")
@@ -100,7 +107,7 @@ class Trade(Base):
     pnl = Column(Float, default=0.0, nullable=False)
     trade_type = Column(SQLEnum(TradeType), nullable=False)
     market_data = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=get_local_time, nullable=False)
 
     user = relationship("User", back_populates="trades")
 
@@ -117,12 +124,12 @@ class PromptConfig(Base):
     prompt_text = Column(Text, nullable=False)
     symbol = Column(String(20), nullable=False, default="BTC/USDT")
     ai_model = Column(String(50), nullable=False, default="claude-4.5-opus")
-    execution_interval = Column(Integer, nullable=False, default=60)
+    execution_interval = Column(Integer, nullable=False, default=1, comment="执行间隔（分钟）")
     is_active = Column(Boolean, default=False, nullable=False)
     last_executed_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=get_local_time, nullable=False)
     updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=get_local_time, onupdate=get_local_time, nullable=False
     )
 
     user = relationship("User", foreign_keys=[user_id])
@@ -136,7 +143,7 @@ class MarketPrice(Base):
     id = Column(Integer, primary_key=True, index=True)
     symbol = Column(String(20), nullable=False, index=True)
     price = Column(Float, nullable=False)
-    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    timestamp = Column(DateTime, default=get_local_time, nullable=False, index=True)
 
 
 class AssetHistory(Base):
@@ -149,7 +156,7 @@ class AssetHistory(Base):
     total_assets = Column(Float, nullable=False)
     balance = Column(Float, nullable=False)
     position_value = Column(Float, nullable=False)
-    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    timestamp = Column(DateTime, default=get_local_time, nullable=False, index=True)
 
     user = relationship("User", back_populates="asset_history")
 
@@ -166,7 +173,7 @@ class AIDecisionLog(Base):
     ai_reasoning = Column(Text, nullable=True)
     decision = Column(String(20), nullable=False)
     action_taken = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(DateTime, default=get_local_time, nullable=False, index=True)
 
     user = relationship("User", back_populates="ai_decisions")
 
@@ -180,6 +187,6 @@ class AIConversation(Base):
     user_id = Column(Integer, ForeignKey("nt_users.id", ondelete="CASCADE"), nullable=False)
     role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(DateTime, default=get_local_time, nullable=False, index=True)
 
     user = relationship("User", back_populates="ai_conversations")

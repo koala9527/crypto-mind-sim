@@ -7,7 +7,7 @@ import logging
 from datetime import datetime
 from sqlalchemy.orm import Session
 from backend.core.database import SessionLocal
-from backend.core.models import User, PromptConfig, Position
+from backend.core.models import User, PromptConfig, Position, get_local_time
 from backend.engine.engine import TradingEngine
 from backend.core.config import settings
 from typing import List
@@ -116,7 +116,7 @@ class AITradingScheduler:
 
             # 扣除保证金
             user.balance -= margin_required
-            user.updated_at = datetime.utcnow()
+            user.updated_at = get_local_time()
 
             db.commit()
             db.refresh(position)

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timedelta
 from backend.core.database import get_db
-from backend.core.models import User, Position, Trade, AIDecisionLog, AIConversation, PromptConfig, AssetHistory
+from backend.core.models import User, Position, Trade, AIDecisionLog, AIConversation, PromptConfig, AssetHistory, get_local_time
 from backend.core.config import settings
 import logging
 
@@ -146,7 +146,7 @@ async def reset_user_data(user_id: int, db: Session = Depends(get_db)):
 
     # 重置余额
     user.balance = settings.INITIAL_BALANCE
-    user.updated_at = datetime.utcnow()
+    user.updated_at = get_local_time()
 
     db.commit()
 
@@ -155,7 +155,7 @@ async def reset_user_data(user_id: int, db: Session = Depends(get_db)):
     return {
         "message": "数据重置成功",
         "balance": settings.INITIAL_BALANCE,
-        "reset_at": datetime.utcnow().isoformat()
+        "reset_at": get_local_time().isoformat()
     }
 
 
@@ -170,7 +170,7 @@ async def get_asset_history(
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = get_local_time() - timedelta(hours=hours)
     records = (
         db.query(AssetHistory)
         .filter(AssetHistory.user_id == user_id, AssetHistory.timestamp >= since)

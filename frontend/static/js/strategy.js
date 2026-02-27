@@ -119,6 +119,7 @@ function fillStrategyForm(strategy) {
     document.getElementById('strategyDescription').value = strategy.description || '';
     document.getElementById('strategyPrompt').value = strategy.prompt_text || '';
     document.getElementById('strategySymbol').value = strategy.symbol || 'BTC/USDT';
+    document.getElementById('strategyInterval').value = strategy.execution_interval || 1;
 
     // 显示保存按钮
     document.getElementById('saveStrategyBtn').classList.remove('hidden');
@@ -137,6 +138,7 @@ function clearStrategyForm() {
     document.getElementById('strategyDescription').value = '';
     document.getElementById('strategySymbol').value = 'BTC/USDT';
     document.getElementById('strategyPrompt').value = '';
+    document.getElementById('strategyInterval').value = '1';
     currentEditingPrompt = null;
 
     document.getElementById('resetStrategyBtn').classList.add('hidden');
@@ -149,6 +151,7 @@ async function saveStrategy() {
     const description = document.getElementById('strategyDescription').value.trim();
     const symbol = document.getElementById('strategySymbol').value;
     const prompt_text = document.getElementById('strategyPrompt').value.trim();
+    const execution_interval = parseInt(document.getElementById('strategyInterval').value) || 1;
 
     if (!name) {
         showToast(t('strategyNameRequired'), 'warning');
@@ -157,6 +160,11 @@ async function saveStrategy() {
 
     if (!prompt_text) {
         showToast(t('promptRequired'), 'warning');
+        return;
+    }
+
+    if (execution_interval < 1) {
+        showToast('执行频率最小为1分钟', 'warning');
         return;
     }
 
@@ -171,7 +179,7 @@ async function saveStrategy() {
         description,
         symbol,
         prompt_text,
-        execution_interval: 60
+        execution_interval
     };
 
     try {

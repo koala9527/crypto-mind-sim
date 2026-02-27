@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     AI_API_KEY: str = ""
     AI_BASE_URL: str = ""
 
+    # 时区配置
+    TIMEZONE: str = "Asia/Shanghai"
+
     class Config:
         env_file = ".env"
         case_sensitive = True

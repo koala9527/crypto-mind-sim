@@ -595,8 +595,20 @@
                         <div class="text-xs mt-1" style="color: var(--text-secondary)">选择您要交易的币种</div>
                     </div>
 
-                    <!-- 执行频率（固定60秒，隐藏） -->
-                    <input type="hidden" id="strategyInterval" value="60">
+                    <!-- 执行频率（分钟） -->
+                    <div>
+                        <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">执行频率（分钟）</label>
+                        <input
+                            type="number"
+                            id="strategyInterval"
+                            value="1"
+                            min="1"
+                            max="1440"
+                            class="w-full input-field rounded px-4 py-2"
+                            placeholder="最小1分钟"
+                        >
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">策略执行间隔，最小1分钟，默认1分钟</div>
+                    </div>
 
                     <!-- 策略描述 -->
                     <div>

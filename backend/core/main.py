@@ -22,6 +22,7 @@ from backend.core.models import (
     AIDecisionLog,
     AIConversation,
     AssetHistory,
+    get_local_time,
 )
 from backend.engine.engine import trading_engine
 from backend.core.config import settings
@@ -421,7 +422,7 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
     return {
         "message": "账号注销成功",
         "username": username,
-        "deleted_at": datetime.utcnow().isoformat()
+        "deleted_at": get_local_time().isoformat()
     }
 
 
@@ -471,7 +472,7 @@ def open_position(
 
     # 扣除保证金
     user.balance -= margin
-    user.updated_at = datetime.utcnow()
+    user.updated_at = get_local_time()
 
     # 创建持仓
     new_position = Position(
@@ -533,11 +534,11 @@ def close_position(position_id: int, db: Session = Depends(get_db)):
 
     # 退还保证金 + 盈亏
     user.balance += position.margin + pnl
-    user.updated_at = datetime.utcnow()
+    user.updated_at = get_local_time()
 
     # 更新持仓状态
     position.is_open = False
-    position.closed_at = datetime.utcnow()
+    position.closed_at = get_local_time()
     position.unrealized_pnl = pnl
 
     # 记录交易历史
@@ -655,7 +656,7 @@ def get_current_price(db: Session = Depends(get_db)):
         return PriceResponse(
             symbol=settings.TRADING_PAIR,
             price=current_price,
-            timestamp=datetime.utcnow(),
+            timestamp=get_local_time(),
         )
 
     return PriceResponse(
@@ -758,7 +759,7 @@ def activate_prompt(prompt_id: int, db: Session = Depends(get_db)):
 
     # 激活指定提示词
     prompt.is_active = True
-    prompt.updated_at = datetime.utcnow()
+    prompt.updated_at = get_local_time()
 
     db.commit()
     db.refresh(prompt)
@@ -789,7 +790,7 @@ def update_prompt(prompt_id: int, prompt_data: PromptCreate, db: Session = Depen
     prompt.prompt_text = prompt_data.prompt_text
     prompt.ai_model = prompt_data.ai_model
     prompt.symbol = prompt_data.symbol
-    prompt.updated_at = datetime.utcnow()
+    prompt.updated_at = get_local_time()
 
     db.commit()
     db.refresh(prompt)
@@ -828,7 +829,7 @@ def reset_prompt_to_default(prompt_id: int, db: Session = Depends(get_db)):
     # 重置为默认值
     prompt.description = default.get("description")
     prompt.prompt_text = default["prompt_text"]
-    prompt.updated_at = datetime.utcnow()
+    prompt.updated_at = get_local_time()
 
     db.commit()
     db.refresh(prompt)

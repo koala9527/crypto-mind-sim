@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from backend.core.database import SessionLocal
-from backend.core.models import PromptConfig, User, Position, MarketPrice, Trade, TradeSide, TradeType
+from backend.core.models import PromptConfig, User, Position, MarketPrice, Trade, TradeSide, TradeType, get_local_time
 from backend.services.ai_service import ai_service
 
 logger = logging.getLogger(__name__)
@@ -54,11 +54,22 @@ def should_execute_strategy(strategy: PromptConfig) -> bool:
     if strategy.last_executed_at is None:
         return True
 
-    # 计算距离上次执行的时间
-    elapsed = (datetime.utcnow() - strategy.last_executed_at).total_seconds()
+    # 计算距离上次执行的时间（秒）
+    # 确保使用本地时区时间进行比较
+    now = get_local_time()
+    # 如果 last_executed_at 带有时区信息，去掉时区信息（因为已经是本地时间）
+    if strategy.last_executed_at.tzinfo is not None:
+        last_executed = strategy.last_executed_at.replace(tzinfo=None)
+    else:
+        last_executed = strategy.last_executed_at
+
+    elapsed = (now - last_executed).total_seconds()
+
+    # execution_interval 现在是分钟，需要转换为秒
+    interval_seconds = strategy.execution_interval * 60
 
     # 如果超过执行间隔，则执行
-    return elapsed >= strategy.execution_interval
+    return elapsed >= interval_seconds
 
 
 async def execute_single_strategy(db: Session, strategy: PromptConfig):
@@ -382,7 +393,7 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
         db.add(decision_log)
 
         # 更新最后执行时间
-        strategy.last_executed_at = datetime.utcnow()
+        strategy.last_executed_at = get_local_time()
         db.commit()
 
     except Exception as e:
@@ -423,7 +434,7 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
                 db.add(decision_log)
 
                 # 更新最后执行时间（避免错误时反复重试）
-                strategy.last_executed_at = datetime.utcnow()
+                strategy.last_executed_at = get_local_time()
 
                 db.commit()
         except Exception:
@@ -545,7 +556,7 @@ async def execute_open_position(db: Session, user: User, strategy: PromptConfig,
 
         # 扣除保证金
         user.balance -= margin
-        user.updated_at = datetime.utcnow()
+        user.updated_at = get_local_time()
 
         # 创建持仓
         new_position = Position(
@@ -563,7 +574,7 @@ async def execute_open_position(db: Session, user: User, strategy: PromptConfig,
         market_data_json = json.dumps({
             'price': current_price,
             'indicators': market_data.get('indicators', {}) if market_data else {},
-            'timestamp': market_data.get('timestamp') if market_data else str(datetime.utcnow()),
+            'timestamp': market_data.get('timestamp') if market_data else str(get_local_time()),
             'decision': decision,
             'reasoning': reasoning
         })
@@ -672,18 +683,18 @@ async def execute_close_positions(db: Session, user: User, strategy: PromptConfi
 
             # 退还保证金 + 盈亏
             user.balance += position.margin + pnl
-            user.updated_at = datetime.utcnow()
+            user.updated_at = get_local_time()
 
             # 更新持仓状态
             position.is_open = False
-            position.closed_at = datetime.utcnow()
+            position.closed_at = get_local_time()
             position.unrealized_pnl = pnl
 
             # 创建交易记录时，保存完整市场数据
             market_data_json = json.dumps({
                 'price': current_price,
                 'indicators': market_data.get('indicators', {}) if market_data else {},
-                'timestamp': market_data.get('timestamp') if market_data else str(datetime.utcnow()),
+                'timestamp': market_data.get('timestamp') if market_data else str(get_local_time()),
                 'position': {
                     'side': position.side.value,
                     'entry_price': position.entry_price,

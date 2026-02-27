@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 from backend.core.database import get_db
-from backend.core.models import User, PromptConfig
+from backend.core.models import User, PromptConfig, get_local_time
 from backend.services.ai_service import AVAILABLE_MODELS
 from backend.utils.init_prompts import DEFAULT_PROMPTS
 import logging
@@ -23,7 +23,7 @@ class StrategyCreate(BaseModel):
     description: Optional[str] = Field(None, description="策略描述")
     prompt_text: str = Field(..., min_length=1, description="AI 提示词")
     symbol: str = Field(default="BTC/USDT", description="交易对")
-    execution_interval: int = Field(default=60, ge=60, description="执行频率（秒，最小60秒）")
+    execution_interval: int = Field(default=1, ge=1, description="执行频率（分钟，最小1分钟）")
 
 
 class StrategyUpdate(BaseModel):
@@ -32,7 +32,7 @@ class StrategyUpdate(BaseModel):
     description: Optional[str] = None
     prompt_text: Optional[str] = Field(None, min_length=1)
     symbol: Optional[str] = None
-    execution_interval: Optional[int] = Field(None, ge=60)
+    execution_interval: Optional[int] = Field(None, ge=1, description="执行频率（分钟，最小1分钟）")
     is_active: Optional[bool] = None
 
 
@@ -217,7 +217,7 @@ async def update_strategy(
     for key, value in update_data.items():
         setattr(strategy, key, value)
 
-    strategy.updated_at = datetime.utcnow()
+    strategy.updated_at = get_local_time()
     db.commit()
     db.refresh(strategy)
 
@@ -268,7 +268,7 @@ async def activate_strategy(
 
     # 激活策略
     strategy.is_active = True
-    strategy.updated_at = datetime.utcnow()
+    strategy.updated_at = get_local_time()
 
     db.commit()
     db.refresh(strategy)
@@ -293,7 +293,7 @@ async def deactivate_strategy(
         raise HTTPException(status_code=404, detail="策略不存在")
 
     strategy.is_active = False
-    strategy.updated_at = datetime.utcnow()
+    strategy.updated_at = get_local_time()
 
     db.commit()
     db.refresh(strategy)
