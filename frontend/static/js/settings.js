@@ -106,6 +106,13 @@ async function loadAIConfigFromServer() {
 
 // 显示设置模态框
 async function showSettingsModal() {
+    // 检查是否已登录
+    const userId = localStorage.getItem('userId');
+    if (!userId) {
+        showToast('请先登录', 'warning');
+        return;
+    }
+
     const modal = document.getElementById('settingsModal');
     if (!modal) return;
 

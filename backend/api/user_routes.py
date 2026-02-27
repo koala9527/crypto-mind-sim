@@ -74,7 +74,7 @@ async def get_ai_config(
     """
     获取用户的 AI 配置状态
 
-    返回用户是否已配置 API Key（不返回完整密钥）
+    返回用户的完整 API Key（用于前端配置）
     """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -83,10 +83,9 @@ async def get_ai_config(
     has_config = bool(user.ai_api_key)
 
     if has_config:
-        masked_key = user.ai_api_key[:8] + "..." + user.ai_api_key[-4:] if len(user.ai_api_key) > 12 else "***"
         return {
             "configured": True,
-            "api_key": masked_key,
+            "api_key": user.ai_api_key,
             "base_url": user.ai_base_url or "",
             "ai_model": user.ai_model or "claude-4.5-opus"
         }
