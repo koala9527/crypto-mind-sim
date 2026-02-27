@@ -35,7 +35,12 @@ async def execute_active_strategies():
                 logger.debug(f"策略 {strategy.name} 未到执行时间")
 
     except Exception as e:
-        logger.error(f"执行策略任务失败: {e}")
+        logger.error(
+            f"执行策略任务失败:\n"
+            f"  错误类型: {type(e).__name__}\n"
+            f"  错误信息: {str(e)}",
+            exc_info=True
+        )
     finally:
         db.close()
 
@@ -398,7 +403,13 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
 
     except Exception as e:
         error_message = f"执行策略失败: {str(e)}"
-        logger.error(f"策略 {strategy.name if strategy else 'Unknown'} {error_message}")
+        logger.error(
+            f"策略 {strategy.name if strategy else 'Unknown'} {error_message}\n"
+            f"  错误类型: {type(e).__name__}\n"
+            f"  策略ID: {strategy.id if strategy else 'N/A'}\n"
+            f"  用户ID: {strategy.user_id if strategy else 'N/A'}",
+            exc_info=True
+        )
 
         db.rollback()
 
@@ -601,7 +612,12 @@ async def execute_open_position(db: Session, user: User, strategy: PromptConfig,
 
     except Exception as e:
         error_msg = f"开仓异常: {str(e)}"
-        logger.error(f"策略 {strategy.name} {error_msg}")
+        logger.error(
+            f"策略 {strategy.name} {error_msg}\n"
+            f"  错误类型: {type(e).__name__}\n"
+            f"  决策: {decision}",
+            exc_info=True
+        )
 
         # 记录异常到交易历史
         try:
@@ -731,7 +747,12 @@ async def execute_close_positions(db: Session, user: User, strategy: PromptConfi
 
     except Exception as e:
         error_msg = f"平仓异常: {str(e)}"
-        logger.error(f"策略 {strategy.name} {error_msg}")
+        logger.error(
+            f"策略 {strategy.name} {error_msg}\n"
+            f"  错误类型: {type(e).__name__}\n"
+            f"  决策: {decision}",
+            exc_info=True
+        )
 
         # 记录异常到交易历史
         try:

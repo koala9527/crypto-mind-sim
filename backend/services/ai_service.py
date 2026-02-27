@@ -126,10 +126,22 @@ class AIService:
                     raise ValueError(f"AI API 返回非 JSON 内容 (status={response.status_code}): {body[:200]}")
         except httpx.HTTPStatusError as e:
             body = e.response.text[:500] if e.response else ""
-            logger.error(f"AI API HTTP 错误 {e.response.status_code}: {body}")
+            logger.error(
+                f"AI API HTTP 错误:\n"
+                f"  状态码: {e.response.status_code}\n"
+                f"  URL: {url}\n"
+                f"  响应内容: {body}",
+                exc_info=True
+            )
             raise
         except httpx.HTTPError as e:
-            logger.error(f"AI API 调用失败: {e}")
+            logger.error(
+                f"AI API 调用失败:\n"
+                f"  URL: {url}\n"
+                f"  错误类型: {type(e).__name__}\n"
+                f"  错误信息: {str(e)}",
+                exc_info=True
+            )
             raise
 
     async def analyze_market(
