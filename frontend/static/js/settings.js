@@ -74,12 +74,45 @@ async function saveAIConfig(apiKey, baseUrl, aiModel) {
     }
 }
 
+// 从服务器获取 AI 配置
+async function loadAIConfigFromServer() {
+    const userId = localStorage.getItem('userId');
+    if (!userId) {
+        return null;
+    }
+
+    try {
+        const response = await fetch(`/api/users/${userId}/ai-config`);
+        if (!response.ok) {
+            throw new Error('获取配置失败');
+        }
+
+        const data = await response.json();
+        if (data.configured) {
+            // 同步到本地存储
+            saveAIConfigLocal(data.api_key, data.base_url, data.ai_model);
+            return {
+                apiKey: data.api_key,
+                baseUrl: data.base_url || '',
+                aiModel: data.ai_model || 'claude-4.5-opus'
+            };
+        }
+        return null;
+    } catch (error) {
+        console.error('从服务器加载配置失败:', error);
+        return null;
+    }
+}
+
 // 显示设置模态框
-function showSettingsModal() {
+async function showSettingsModal() {
     const modal = document.getElementById('settingsModal');
     if (!modal) return;
 
-    const config = getAIConfig();
+    // 先尝试从服务器加载配置
+    const serverConfig = await loadAIConfigFromServer();
+    const config = serverConfig || getAIConfig();
+
     if (config) {
         document.getElementById('apiKeyInput').value = config.apiKey || '';
         document.getElementById('baseUrlInput').value = config.baseUrl || '';
@@ -135,16 +168,28 @@ function showConfigPrompt() {
     return true;
 }
 
-// 登录后同步配置到服务器
+// 登录后从服务器加载配置
 async function syncConfigOnLogin() {
-    const config = getAIConfig();
-    if (config && config.apiKey) {
-        try {
-            await syncAIConfigToServer(config.apiKey, config.baseUrl, config.aiModel);
-            console.log('配置已自动同步到服务器');
-        } catch (error) {
-            console.error('自动同步配置失败:', error);
+    const userId = localStorage.getItem('userId');
+    if (!userId) {
+        return;
+    }
+
+    try {
+        // 从服务器加载配置
+        const serverConfig = await loadAIConfigFromServer();
+        if (serverConfig) {
+            console.log('已从服务器加载 AI 配置');
+        } else {
+            // 如果服务器没有配置，尝试同步本地配置到服务器
+            const localConfig = getAIConfig();
+            if (localConfig && localConfig.apiKey) {
+                await syncAIConfigToServer(localConfig.apiKey, localConfig.baseUrl, localConfig.aiModel);
+                console.log('本地配置已同步到服务器');
+            }
         }
+    } catch (error) {
+        console.error('配置同步失败:', error);
     }
 }
 
