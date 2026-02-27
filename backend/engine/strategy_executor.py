@@ -17,32 +17,56 @@ async def execute_active_strategies():
     执行所有激活的策略
     检查每个策略的执行间隔，如果到时间则执行
     """
+    # 快速获取需要执行的策略ID列表，然后立即释放连接
     db = SessionLocal()
     try:
-        # 获取所有激活的策略
         active_strategies = db.query(PromptConfig).filter(
             PromptConfig.is_active == True
         ).all()
 
-        logger.debug(f"发现 {len(active_strategies)} 个激活的策略")
+        # 提取需要执行的策略信息
+        strategies_to_execute = [
+            {"id": s.id, "name": s.name, "symbol": s.symbol}
+            for s in active_strategies
+            if should_execute_strategy(s)
+        ]
 
-        for strategy in active_strategies:
-            # 检查是否到执行时间
-            if should_execute_strategy(strategy):
-                logger.info(f"执行策略: {strategy.name} ({strategy.symbol})")
-                await execute_single_strategy(db, strategy)
-            else:
-                logger.debug(f"策略 {strategy.name} 未到执行时间")
-
+        logger.debug(f"发现 {len(active_strategies)} 个激活的策略，{len(strategies_to_execute)} 个需要执行")
     except Exception as e:
         logger.error(
-            f"执行策略任务失败:\n"
+            f"获取策略列表失败:\n"
             f"  错误类型: {type(e).__name__}\n"
             f"  错误信息: {str(e)}",
             exc_info=True
         )
+        return
     finally:
         db.close()
+
+    # 为每个策略创建独立的数据库会话
+    for strategy_info in strategies_to_execute:
+        db = SessionLocal()
+        try:
+            # 重新查询策略对象（使用新的会话）
+            strategy = db.query(PromptConfig).filter(
+                PromptConfig.id == strategy_info["id"]
+            ).first()
+
+            if strategy:
+                logger.info(f"执行策略: {strategy.name} ({strategy.symbol})")
+                await execute_single_strategy(db, strategy)
+            else:
+                logger.warning(f"策略 ID {strategy_info['id']} 不存在")
+        except Exception as e:
+            logger.error(
+                f"执行策略 {strategy_info['name']} 失败:\n"
+                f"  错误类型: {type(e).__name__}\n"
+                f"  错误信息: {str(e)}",
+                exc_info=True
+            )
+            db.rollback()
+        finally:
+            db.close()
 
 
 def should_execute_strategy(strategy: PromptConfig) -> bool:

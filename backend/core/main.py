@@ -208,47 +208,67 @@ def scheduled_price_update():
     from backend.api.strategy_routes import AVAILABLE_SYMBOLS
     from backend.core.models import MarketPrice
 
+    # 第一步：获取并保存所有交易对的价格（快速操作）
     db = SessionLocal()
     try:
-        # 获取并保存所有支持交易对的价格
         for symbol_info in AVAILABLE_SYMBOLS:
             symbol = symbol_info["symbol"]
             try:
-                # 获取当前价格
                 current_price = trading_engine.fetch_current_price(symbol)
                 if current_price is None:
                     logger.warning(f"{symbol} 价格获取失败，跳过")
                     continue
 
-                # 保存价格到数据库
                 trading_engine.save_price_to_db(db, symbol, current_price)
                 logger.debug(f"保存 {symbol} 价格: ${current_price:.2f}")
 
             except Exception as e:
                 logger.error(f"更新 {symbol} 价格失败: {e}")
                 continue
+        db.commit()
+    except Exception as e:
+        logger.error(f"价格更新失败: {e}")
+        db.rollback()
+    finally:
+        db.close()
 
-        # 更新所有持仓的盈亏（遍历所有交易对的持仓）
-        for symbol_info in AVAILABLE_SYMBOLS:
-            symbol = symbol_info["symbol"]
-            try:
-                # 获取该交易对的最新价格
-                latest_price = (
-                    db.query(MarketPrice)
-                    .filter(MarketPrice.symbol == symbol)
-                    .order_by(MarketPrice.timestamp.desc())
-                    .first()
-                )
-                if latest_price:
-                    trading_engine.update_positions_pnl(db, latest_price.price, symbol)
-            except Exception as e:
-                logger.error(f"更新 {symbol} 持仓盈亏失败: {e}")
+    # 第二步：更新所有持仓的盈亏（为每个交易对创建独立会话）
+    for symbol_info in AVAILABLE_SYMBOLS:
+        symbol = symbol_info["symbol"]
+        db = SessionLocal()
+        try:
+            latest_price = (
+                db.query(MarketPrice)
+                .filter(MarketPrice.symbol == symbol)
+                .order_by(MarketPrice.timestamp.desc())
+                .first()
+            )
+            if latest_price:
+                trading_engine.update_positions_pnl(db, latest_price.price, symbol)
+                db.commit()
+        except Exception as e:
+            logger.error(f"更新 {symbol} 持仓盈亏失败: {e}")
+            db.rollback()
+        finally:
+            db.close()
 
-        # 检查爆仓（所有交易对）
+    # 第三步：检查爆仓
+    db = SessionLocal()
+    try:
         trading_engine.check_liquidation(db)
+        db.commit()
+    except Exception as e:
+        logger.error(f"检查爆仓失败: {e}")
+        db.rollback()
+    finally:
+        db.close()
 
-        # 记录所有用户的总资产快照
+    # 第四步：记录所有用户的总资产快照（批量操作）
+    db = SessionLocal()
+    try:
         users = db.query(User).all()
+        snapshots = []
+
         for user in users:
             open_positions = db.query(Position).filter(
                 Position.user_id == user.id,
@@ -256,17 +276,21 @@ def scheduled_price_update():
             ).all()
             position_value = sum(p.margin + p.unrealized_pnl for p in open_positions)
             total_assets = user.balance + position_value
-            snapshot = AssetHistory(
+
+            snapshots.append(AssetHistory(
                 user_id=user.id,
                 total_assets=total_assets,
                 balance=user.balance,
                 position_value=position_value,
-            )
-            db.add(snapshot)
-        db.commit()
+            ))
 
+        # 批量插入
+        if snapshots:
+            db.bulk_save_objects(snapshots)
+        db.commit()
     except Exception as e:
-        logger.error(f"定时任务执行失败: {e}")
+        logger.error(f"记录资产快照失败: {e}")
+        db.rollback()
     finally:
         db.close()
 

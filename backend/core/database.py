@@ -15,9 +15,15 @@ if db_url.startswith("postgresql://"):
 engine = create_engine(
     db_url,
     echo=False,
-    pool_size=5,
-    max_overflow=10,
-    pool_pre_ping=True,
+    pool_size=20,              # 增加连接池大小以支持多用户并发
+    max_overflow=30,           # 增加溢出连接数
+    pool_pre_ping=True,        # 检测断开的连接
+    pool_recycle=3600,         # 1小时后回收连接，防止连接过期
+    pool_timeout=60,           # 增加超时时间到60秒
+    connect_args={
+        "connect_timeout": 10,  # PostgreSQL 连接超时
+        "options": "-c statement_timeout=30000"  # SQL 语句超时 30秒
+    }
 )
 
 # 创建会话工厂

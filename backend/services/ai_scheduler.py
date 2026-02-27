@@ -23,28 +23,34 @@ class AITradingScheduler:
 
     async def run_ai_trading_for_all_users(self):
         """为所有启用AI交易的用户执行AI决策"""
+        # 获取当前价格（不需要数据库连接）
+        current_price = self.trading_engine.fetch_current_price()
+        if not current_price:
+            logger.warning("价格获取失败，跳过AI交易")
+            return
+
+        # 获取所有用户ID（快速查询后立即释放连接）
         db = SessionLocal()
         try:
-            # 获取当前价格
-            current_price = self.trading_engine.fetch_current_price()
-            if not current_price:
-                logger.warning("价格获取失败，跳过AI交易")
-                return
-
-            # 获取所有用户
-            users = db.query(User).all()
-
-            for user in users:
-                try:
-                    await self.execute_ai_trading_for_user(db, user, current_price)
-                except Exception as e:
-                    logger.error(f"用户 {user.username} AI交易失败: {e}")
-                    continue
-
+            user_ids = [u.id for u in db.query(User.id, User.username).all()]
         except Exception as e:
-            logger.error(f"AI交易调度失败: {e}")
+            logger.error(f"获取用户列表失败: {e}")
+            return
         finally:
             db.close()
+
+        # 为每个用户创建独立的数据库会话
+        for user_id in user_ids:
+            db = SessionLocal()
+            try:
+                user = db.query(User).filter(User.id == user_id).first()
+                if user:
+                    await self.execute_ai_trading_for_user(db, user, current_price)
+            except Exception as e:
+                logger.error(f"用户 ID {user_id} AI交易失败: {e}")
+                db.rollback()
+            finally:
+                db.close()
 
     async def execute_ai_trading_for_user(self, db: Session, user: User, current_price: float):
         """为单个用户执行AI交易决策"""

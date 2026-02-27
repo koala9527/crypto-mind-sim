@@ -56,11 +56,9 @@ async def update_ai_config(
 
     logger.info(f"用户 {user.username} 更新 AI 配置")
 
-    # 返回配置（API Key 返回脱敏版本）
-    masked_key = config.api_key[:8] + "..." + config.api_key[-4:] if len(config.api_key) > 12 else "***"
-
+    # 返回完整配置（包含完整 API Key）
     return AIConfigResponse(
-        api_key=masked_key,
+        api_key=config.api_key,
         base_url=user.ai_base_url,
         ai_model=user.ai_model or "claude-4.5-opus"
     )
@@ -135,27 +133,32 @@ async def reset_user_data(user_id: int, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    # 删除关联数据
-    db.query(Position).filter(Position.user_id == user_id).delete()
-    db.query(Trade).filter(Trade.user_id == user_id).delete()
-    db.query(AIDecisionLog).filter(AIDecisionLog.user_id == user_id).delete()
-    db.query(AIConversation).filter(AIConversation.user_id == user_id).delete()
-    db.query(PromptConfig).filter(PromptConfig.user_id == user_id).delete()
-    db.query(AssetHistory).filter(AssetHistory.user_id == user_id).delete()
+    try:
+        # 使用批量删除，减少数据库往返次数
+        db.query(Position).filter(Position.user_id == user_id).delete(synchronize_session=False)
+        db.query(Trade).filter(Trade.user_id == user_id).delete(synchronize_session=False)
+        db.query(AIDecisionLog).filter(AIDecisionLog.user_id == user_id).delete(synchronize_session=False)
+        db.query(AIConversation).filter(AIConversation.user_id == user_id).delete(synchronize_session=False)
+        db.query(PromptConfig).filter(PromptConfig.user_id == user_id).delete(synchronize_session=False)
+        db.query(AssetHistory).filter(AssetHistory.user_id == user_id).delete(synchronize_session=False)
 
-    # 重置余额
-    user.balance = settings.INITIAL_BALANCE
-    user.updated_at = get_local_time()
+        # 重置余额
+        user.balance = settings.INITIAL_BALANCE
+        user.updated_at = get_local_time()
 
-    db.commit()
+        db.commit()
 
-    logger.info(f"用户数据已重置: {user.username} (ID: {user_id}), 余额恢复为 {settings.INITIAL_BALANCE}")
+        logger.info(f"用户数据已重置: {user.username} (ID: {user_id}), 余额恢复为 {settings.INITIAL_BALANCE}")
 
-    return {
-        "message": "数据重置成功",
-        "balance": settings.INITIAL_BALANCE,
-        "reset_at": get_local_time().isoformat()
-    }
+        return {
+            "message": "数据重置成功",
+            "balance": settings.INITIAL_BALANCE,
+            "reset_at": get_local_time().isoformat()
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"重置用户数据失败: {e}")
+        raise HTTPException(status_code=500, detail=f"重置失败: {str(e)}")
 
 
 @router.get("/{user_id}/asset-history")
