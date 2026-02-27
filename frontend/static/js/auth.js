@@ -96,12 +96,14 @@ function logout() {
         }
         // 销毁总资产图表，重置为 BTC 模式
         destroyAssetsChart();
-        // 隐藏主内容区域
+        // 隐藏主内容区域，显示公共内容
         document.getElementById('mainContent').classList.add('hidden');
+        document.getElementById('publicContent').classList.remove('hidden');
         updateUserArea();
-        // 重新初始化 BTC 图表
+        // 重新初始化 BTC 图表和公共内容
         initPriceChart();
         updatePriceChart();
+        if (typeof loadPublicLeaderboard === 'function') loadPublicLeaderboard();
     }
 }
 
