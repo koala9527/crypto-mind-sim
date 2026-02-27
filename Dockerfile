@@ -1,5 +1,7 @@
-# 使用轻量级 Python 基础镜像（使用阿里云镜像加速）
-FROM registry.cn-hangzhou.aliyuncs.com/library/python:3.11-slim
+# 使用轻量级 Python 基础镜像
+# 如果遇到 Docker Hub 限制，请配置 Docker 镜像加速器
+# 或使用: docker pull --platform linux/amd64 python:3.11-slim
+FROM python:3.11-slim
 
 # 设置工作目录
 WORKDIR /app
