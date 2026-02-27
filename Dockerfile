@@ -1,5 +1,5 @@
-# 使用轻量级 Python 基础镜像（使用固定版本避免 digest 问题）
-FROM python:3.11.9-slim
+# 使用轻量级 Python 基础镜像（使用较旧的稳定版本）
+FROM python:3.11.8-slim
 
 # 设置工作目录
 WORKDIR /app
