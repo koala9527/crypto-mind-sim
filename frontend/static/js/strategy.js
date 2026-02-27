@@ -269,9 +269,12 @@ async function resetToDefault() {
 }
 
 // 显示策略创建模态框
-function showCreateStrategyModal() {
-    // 检查是否已配置 API Key
-    if (typeof checkAIConfig === 'function' && !checkAIConfig()) {
+async function showCreateStrategyModal() {
+    // 检查是否已配置 API Key（检查本地和服务器）
+    const localConfig = typeof getAIConfig === 'function' ? getAIConfig() : null;
+    const serverConfig = typeof loadAIConfigFromServer === 'function' ? await loadAIConfigFromServer() : null;
+
+    if (!localConfig && !serverConfig) {
         showToast(t('configureApiKey'), 'warning');
         setTimeout(() => {
             if (typeof showSettingsModal === 'function') showSettingsModal();

@@ -57,7 +57,7 @@ class User(Base):
     initial_balance = Column(Float, default=10000.0, nullable=False)
     ai_api_key = Column(String(200), nullable=True)
     ai_base_url = Column(String(200), nullable=True)
-    ai_model = Column(String(100), nullable=True, default="claude-4.5-opus")
+    ai_model = Column(String(100), nullable=True)
     created_at = Column(DateTime, default=get_local_time, nullable=False)
     updated_at = Column(
         DateTime, default=get_local_time, onupdate=get_local_time, nullable=False
