@@ -838,52 +838,6 @@ def reset_prompt_to_default(prompt_id: int, db: Session = Depends(get_db)):
     return {"message": "已重置为默认预设", "prompt": prompt}
 
 
-@app.get("/api/top-crypto")
-def get_top_crypto(db: Session = Depends(get_db)):
-    """获取 Top 10 加密货币行情"""
-    from backend.api.strategy_routes import AVAILABLE_SYMBOLS
-
-    result = []
-    for idx, symbol_info in enumerate(AVAILABLE_SYMBOLS, 1):
-        symbol = symbol_info["symbol"]
-
-        # 获取最新价格
-        latest_price = (
-            db.query(MarketPrice)
-            .filter(MarketPrice.symbol == symbol)
-            .order_by(MarketPrice.timestamp.desc())
-            .first()
-        )
-
-        if not latest_price:
-            continue
-
-        # 获取24小时前的价格（约1440个数据点，每分钟1个）
-        price_24h_ago = (
-            db.query(MarketPrice)
-            .filter(MarketPrice.symbol == symbol)
-            .order_by(MarketPrice.timestamp.desc())
-            .offset(1440)
-            .first()
-        )
-
-        # 计算24小时涨跌幅
-        change_24h = 0.0
-        if price_24h_ago and price_24h_ago.price > 0:
-            change_24h = ((latest_price.price - price_24h_ago.price) / price_24h_ago.price) * 100
-
-        result.append({
-            "rank": idx,
-            "symbol": symbol,
-            "name": symbol_info["name"],
-            "price": latest_price.price,
-            "change_24h": round(change_24h, 2),
-            "timestamp": latest_price.timestamp
-        })
-
-    return {"data": result}
-
-
 # ---------- 系统统计 ----------
 
 

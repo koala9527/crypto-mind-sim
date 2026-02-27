@@ -54,7 +54,6 @@ document.addEventListener('DOMContentLoaded', () => {
         // 如果未登录，初始化 BTC 图表并加载公开内容
         initPriceChart();
         updatePriceChart();
-        if (typeof loadTopCryptoData === 'function') loadTopCryptoData();
         if (typeof loadPublicLeaderboard === 'function') loadPublicLeaderboard();
     }
 
