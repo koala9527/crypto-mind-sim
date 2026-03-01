@@ -719,11 +719,11 @@ async def execute_close_positions(db: Session, user: User, strategy: PromptConfi
         total_pnl = 0
 
         for position in positions:
-            # 计算盈亏
+            # 计算盈亏（保证金 = 开仓价*数量/杠杆，杠杆效果已在保证金中体现，不重复乘）
             if position.side == TradeSide.LONG:
-                pnl = (current_price - position.entry_price) * position.quantity * position.leverage
+                pnl = (current_price - position.entry_price) * position.quantity
             else:
-                pnl = (position.entry_price - current_price) * position.quantity * position.leverage
+                pnl = (position.entry_price - current_price) * position.quantity
 
             # 退还保证金 + 盈亏
             user.balance += position.margin + pnl

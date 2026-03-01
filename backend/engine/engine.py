@@ -372,12 +372,14 @@ class TradingEngine:
 
             for position in open_positions:
                 # 计算未实现盈亏
+                # 保证金 = (开仓价 * 数量) / 杠杆，杠杆效果已体现在保证金比例上
+                # 盈亏 = 价格变动 * 数量（不再重复乘杠杆，否则等效杠杆²）
                 if position.side == TradeSide.LONG:
-                    # 做多：(当前价 - 开仓价) * 数量 * 杠杆
-                    pnl = (current_price - position.entry_price) * position.quantity * position.leverage
+                    # 做多：(当前价 - 开仓价) * 数量
+                    pnl = (current_price - position.entry_price) * position.quantity
                 else:
-                    # 做空：(开仓价 - 当前价) * 数量 * 杠杆
-                    pnl = (position.entry_price - current_price) * position.quantity * position.leverage
+                    # 做空：(开仓价 - 当前价) * 数量
+                    pnl = (position.entry_price - current_price) * position.quantity
 
                 position.unrealized_pnl = pnl
 
