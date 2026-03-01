@@ -479,16 +479,68 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
             db.rollback()
 
 
+def strip_json_comments(json_str: str) -> str:
+    """
+    移除 JSON 中的 // 单行注释和 /* */ 块注释，正确跳过字符串内部的 //
+    """
+    result = []
+    i = 0
+    in_string = False
+    escaped = False
+
+    while i < len(json_str):
+        char = json_str[i]
+
+        if escaped:
+            result.append(char)
+            escaped = False
+            i += 1
+            continue
+
+        if char == '\\' and in_string:
+            result.append(char)
+            escaped = True
+            i += 1
+            continue
+
+        if char == '"':
+            in_string = not in_string
+            result.append(char)
+            i += 1
+            continue
+
+        if not in_string:
+            # // 单行注释：跳到行尾
+            if char == '/' and i + 1 < len(json_str) and json_str[i + 1] == '/':
+                while i < len(json_str) and json_str[i] != '\n':
+                    i += 1
+                continue
+            # /* */ 块注释
+            if char == '/' and i + 1 < len(json_str) and json_str[i + 1] == '*':
+                i += 2
+                while i < len(json_str) - 1:
+                    if json_str[i] == '*' and json_str[i + 1] == '/':
+                        i += 2
+                        break
+                    i += 1
+                continue
+
+        result.append(char)
+        i += 1
+
+    return ''.join(result)
+
+
 def extract_json_from_content(content: str) -> str:
-    """从 AI 响应中提取 JSON，支持 markdown 代码块包裹的情况"""
+    """从 AI 响应中提取 JSON，支持 markdown 代码块包裹以及 // /* */ 注释"""
     # 尝试提取 ```json ... ``` 或 ``` ... ``` 块
     match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
     if match:
-        return match.group(1)
+        return strip_json_comments(match.group(1))
     # 尝试直接找第一个 { ... } 块
     match = re.search(r'\{.*\}', content, re.DOTALL)
     if match:
-        return match.group(0)
+        return strip_json_comments(match.group(0))
     return content
 
 
