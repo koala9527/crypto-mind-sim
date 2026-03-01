@@ -34,7 +34,8 @@ async function updateData() {
             updatePositions(),
             updateLeaderboard(),
             updateStats(),
-            updatePrompts()
+            updatePrompts(),
+            updateTradeHistory()
         ]);
         updateEstimatedMargin();
     } else {
