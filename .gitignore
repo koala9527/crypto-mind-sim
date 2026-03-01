@@ -47,7 +47,7 @@ wheels/
 Thumbs.db
 
 # Claude Code
-.claude/
+# .claude/
 
 # 临时文件
 nul
