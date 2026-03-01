@@ -179,6 +179,60 @@ function renderTradeDetail(trade, aiDecisions) {
             </div>
     `;
 
+    // ERROR 类型：专门展示错误详情
+    if (trade.trade_type === 'ERROR' && marketData) {
+        const statusCode = marketData.status_code;
+        const errorMsg = marketData.error || '未知错误';
+        const errorType = marketData.error_type || marketData.exception_type || '';
+        const apiResponse = marketData.api_response || marketData.ai_response || '';
+
+        // 根据 HTTP 状态码给出提示
+        const statusHints = {
+            401: '⚠️ API Key 无效或已过期，请在设置中更新',
+            403: '⚠️ 无访问权限，请检查 API Key 权限',
+            429: '⚠️ 请求频率超限，请降低策略执行频率',
+            402: '⚠️ 账户余额不足，请充值 API 服务账户',
+            404: '⚠️ 模型不存在，请检查模型名称配置',
+            500: '⚠️ API 服务端内部错误，稍后重试',
+            502: '⚠️ API 网关错误，稍后重试',
+            503: '⚠️ API 服务暂时不可用，稍后重试',
+        };
+        const hint = statusCode ? statusHints[statusCode] || '' : '';
+
+        content += `
+            <div class="card rounded p-4 border" style="border-color: var(--danger)">
+                <h3 class="text-lg font-bold mb-4" style="color: var(--danger)">⛔ 错误详情</h3>
+                <div class="space-y-3">
+                    ${statusCode ? `
+                        <div class="flex items-center gap-3">
+                            <span class="text-sm font-semibold" style="color: var(--text-secondary)">HTTP 状态码</span>
+                            <span class="badge badge-danger font-mono">${statusCode}</span>
+                        </div>
+                    ` : ''}
+                    ${errorType ? `
+                        <div>
+                            <div class="text-sm font-semibold mb-1" style="color: var(--text-secondary)">错误类型</div>
+                            <div class="text-sm font-mono">${errorType}</div>
+                        </div>
+                    ` : ''}
+                    <div>
+                        <div class="text-sm font-semibold mb-1" style="color: var(--text-secondary)">错误信息</div>
+                        <div class="text-sm p-3 rounded" style="background: var(--bg-primary); color: var(--danger); word-break: break-all;">${errorMsg}</div>
+                    </div>
+                    ${hint ? `
+                        <div class="text-sm p-2 rounded" style="background: rgba(255,160,0,0.1); color: #ffa000;">${hint}</div>
+                    ` : ''}
+                    ${apiResponse ? `
+                        <div>
+                            <div class="text-sm font-semibold mb-1" style="color: var(--text-secondary)">API 原始响应</div>
+                            <div class="text-xs p-3 rounded font-mono" style="background: var(--bg-primary); white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto;">${apiResponse}</div>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+    }
+
     // AI决策信息
     if (relatedDecision) {
         content += `
@@ -214,13 +268,22 @@ function renderTradeDetail(trade, aiDecisions) {
         `;
     }
 
-    // 市场数据快照
-    if (marketData) {
+    // 市场数据快照（ERROR 类型只保留指标部分，不重复显示错误字段）
+    if (marketData && trade.trade_type !== 'ERROR') {
         content += `
             <div class="card rounded p-4">
                 <h3 class="text-lg font-bold mb-4">📊 市场数据快照</h3>
                 <div class="text-sm p-3 rounded" style="background: var(--bg-primary)">
                     <pre style="white-space: pre-wrap; word-wrap: break-word;">${JSON.stringify(marketData, null, 2)}</pre>
+                </div>
+            </div>
+        `;
+    } else if (marketData && trade.trade_type === 'ERROR' && marketData.indicators) {
+        content += `
+            <div class="card rounded p-4">
+                <h3 class="text-lg font-bold mb-4">📊 发生错误时的市场指标</h3>
+                <div class="text-sm p-3 rounded" style="background: var(--bg-primary)">
+                    <pre style="white-space: pre-wrap; word-wrap: break-word;">${JSON.stringify(marketData.indicators, null, 2)}</pre>
                 </div>
             </div>
         `;

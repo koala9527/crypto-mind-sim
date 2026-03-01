@@ -2,11 +2,21 @@
 AI 服务模块 - 集成多个主流大模型
 """
 import httpx
+import json
 import logging
 from typing import List, Dict, Optional
 from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class AIAPIError(Exception):
+    """AI API 调用错误，携带 HTTP 状态码和完整响应体"""
+
+    def __init__(self, message: str, status_code: int = 0, response_body: str = ""):
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_body = response_body
 
 # 支持的模型列表（只保留你提供的8个模型）
 AVAILABLE_MODELS = {
@@ -125,16 +135,29 @@ class AIService:
                 except Exception:
                     raise ValueError(f"AI API 返回非 JSON 内容 (status={response.status_code}): {body[:200]}")
         except httpx.HTTPStatusError as e:
-            body = e.response.text[:500] if e.response else ""
+            body = e.response.text[:2000] if e.response else ""
+            status = e.response.status_code if e.response else 0
+            # 尝试从响应体中提取 API 提供商的错误描述
+            try:
+                body_json = json.loads(body)
+                api_msg = (
+                    (body_json.get("error") or {}).get("message")
+                    or body_json.get("message")
+                    or body[:300]
+                )
+            except Exception:
+                api_msg = body[:300]
+            friendly = f"API HTTP {status}: {api_msg}"
             logger.error(
                 f"AI API HTTP 错误:\n"
-                f"  状态码: {e.response.status_code}\n"
+                f"  状态码: {status}\n"
                 f"  URL: {url}\n"
                 f"  响应内容: {body}",
                 exc_info=True
             )
-            raise
+            raise AIAPIError(friendly, status_code=status, response_body=body) from e
         except httpx.HTTPError as e:
+            friendly = f"API 网络错误 [{type(e).__name__}]: {str(e)}"
             logger.error(
                 f"AI API 调用失败:\n"
                 f"  URL: {url}\n"
@@ -142,7 +165,7 @@ class AIService:
                 f"  错误信息: {str(e)}",
                 exc_info=True
             )
-            raise
+            raise AIAPIError(friendly, status_code=0, response_body="") from e
 
     async def analyze_market(
         self,

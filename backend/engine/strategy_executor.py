@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from backend.core.database import SessionLocal
 from backend.core.models import PromptConfig, User, Position, MarketPrice, Trade, TradeSide, TradeType, get_local_time
-from backend.services.ai_service import ai_service
+from backend.services.ai_service import ai_service, AIAPIError
 
 logger = logging.getLogger(__name__)
 
@@ -320,14 +320,48 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
             db.commit()
             return
 
-        result = await ai_service.chat_completion(
-            messages=messages,
-            api_key=user.ai_api_key,
-            base_url=user.ai_base_url or "",
-            model=user.ai_model or "claude-4.5-opus",
-            temperature=0.7,
-            max_tokens=1000
-        )
+        try:
+            result = await ai_service.chat_completion(
+                messages=messages,
+                api_key=user.ai_api_key,
+                base_url=user.ai_base_url or "",
+                model=user.ai_model or "claude-4.5-opus",
+                temperature=0.7,
+                max_tokens=1000
+            )
+        except AIAPIError as api_err:
+            error_message = str(api_err)
+            logger.error(f"策略 {strategy.name} API调用失败: {error_message}")
+            trade = Trade(
+                user_id=user.id,
+                symbol=strategy.symbol,
+                side=TradeSide.BUY,
+                price=current_price,
+                quantity=0,
+                leverage=1,
+                trade_type=TradeType.ERROR,
+                market_data=json.dumps({
+                    "error": error_message,
+                    "error_type": "api_error",
+                    "status_code": api_err.status_code,
+                    "api_response": api_err.response_body,
+                    "price": current_price,
+                    "indicators": indicators
+                }, ensure_ascii=False)
+            )
+            db.add(trade)
+            decision_log = AIDecisionLog(
+                user_id=user.id,
+                prompt_name=strategy.name,
+                market_context=market_context,
+                ai_reasoning=error_message,
+                decision="ERROR",
+                action_taken=False
+            )
+            db.add(decision_log)
+            strategy.last_executed_at = get_local_time()
+            db.commit()
+            return
 
         content = result["choices"][0]["message"]["content"]
 
