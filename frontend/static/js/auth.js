@@ -209,5 +209,5 @@ function initApp() {
     destroyPriceChart();
     initAssetsChart();
     updateData();
-    updateInterval = setInterval(updateData, 3000);
+    updateInterval = setInterval(updateData, 60000);
 }

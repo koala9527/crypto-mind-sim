@@ -898,19 +898,29 @@ def open_position(
     return new_position
 
 
-def close_position_record(
-    db: Session,
-    user: User,
-    position: Position,
-    current_price: float,
-    close_reason: str = "USER_CLOSE",
-    execution_source: str = "MANUAL",
-) -> tuple[float, float]:
-    """执行单个持仓平仓并记录交易历史。"""
+@app.delete("/api/positions/{position_id}", status_code=status.HTTP_204_NO_CONTENT)
+def close_position(position_id: int, db: Session = Depends(get_db)):
+    """平仓"""
+    position = db.query(Position).filter(Position.id == position_id).first()
+    if not position:
+        raise HTTPException(status_code=404, detail="持仓不存在")
+
+    if not position.is_open:
+        raise HTTPException(status_code=400, detail="持仓已关闭")
+
+    # 获取用户
+    user = db.query(User).filter(User.id == position.user_id).first()
+
+    # 获取当前价格
+    current_price = trading_engine.fetch_current_price(position.symbol)
+    if current_price is None:
+        raise HTTPException(status_code=500, detail="无法获取市场价格")
+
+    # 计算盈亏
     if position.side == TradeSide.LONG:
-        pnl = (current_price - position.entry_price) * position.quantity * position.leverage
+        pnl = (current_price - position.entry_price) * position.quantity
     else:
-        pnl = (position.entry_price - current_price) * position.quantity * position.leverage
+        pnl = (position.entry_price - current_price) * position.quantity
 
     notional_value = calculate_notional_value(current_price, position.quantity)
     fee_paid = calculate_fee(current_price, position.quantity)

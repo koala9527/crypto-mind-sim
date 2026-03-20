@@ -118,6 +118,8 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
     ai_reasoning = None
     decision_action = "HOLD"
     action_taken = False
+    user = None
+    current_price = 0
 
     try:
         # 获取用户信息
@@ -137,7 +139,7 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
 
         if not market_data:
             error_message = f"无法获取 {strategy.symbol} 的市场数据"
-            logger.warning(error_message)
+            logger.error(error_message)
             # 记录错误到交易历史
             trade = Trade(
                 user_id=user.id,
@@ -299,7 +301,7 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
         # 调用 AI（需要用户的 API 配置）
         if not user.ai_api_key:
             error_message = f"用户 {user.username} 未配置 API Key"
-            logger.warning(error_message)
+            logger.error(error_message)
             # 记录错误
             trade = Trade(
                 user_id=user.id,
@@ -319,14 +321,48 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
             db.commit()
             return
 
-        result = await ai_service.chat_completion(
-            messages=messages,
-            api_key=user.ai_api_key,
-            base_url=user.ai_base_url or "",
-            model=user.ai_model or "claude-4.5-opus",
-            temperature=0.7,
-            max_tokens=1000
-        )
+        try:
+            result = await ai_service.chat_completion(
+                messages=messages,
+                api_key=user.ai_api_key,
+                base_url=user.ai_base_url or "",
+                model=user.ai_model or "claude-4.5-opus",
+                temperature=0.7,
+                max_tokens=1000
+            )
+        except AIAPIError as api_err:
+            error_message = str(api_err)
+            logger.error(f"策略 {strategy.name} API调用失败: {error_message}")
+            trade = Trade(
+                user_id=user.id,
+                symbol=strategy.symbol,
+                side=TradeSide.BUY,
+                price=current_price,
+                quantity=0,
+                leverage=1,
+                trade_type=TradeType.ERROR,
+                market_data=json.dumps({
+                    "error": error_message,
+                    "error_type": "api_error",
+                    "status_code": api_err.status_code,
+                    "api_response": api_err.response_body,
+                    "price": current_price,
+                    "indicators": indicators
+                }, ensure_ascii=False)
+            )
+            db.add(trade)
+            decision_log = AIDecisionLog(
+                user_id=user.id,
+                prompt_name=strategy.name,
+                market_context=market_context,
+                ai_reasoning=error_message,
+                decision="ERROR",
+                action_taken=False
+            )
+            db.add(decision_log)
+            strategy.last_executed_at = get_local_time()
+            db.commit()
+            return
 
         content = result["choices"][0]["message"]["content"]
 
@@ -427,10 +463,12 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
         db.commit()
 
     except Exception as e:
-        error_message = f"执行策略失败: {str(e)}"
+        exc_type = type(e).__name__
+        exc_detail = str(e).strip()
+        error_message = f"执行策略失败: [{exc_type}] {exc_detail}" if exc_detail else f"执行策略失败: [{exc_type}]"
         logger.error(
             f"策略 {strategy.name if strategy else 'Unknown'} {error_message}\n"
-            f"  错误类型: {type(e).__name__}\n"
+            f"  错误类型: {exc_type}\n"
             f"  策略ID: {strategy.id if strategy else 'N/A'}\n"
             f"  用户ID: {strategy.user_id if strategy else 'N/A'}",
             exc_info=True
@@ -441,20 +479,18 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
         # 记录异常到交易历史和决策日志
         try:
             if user and strategy:
-                # 尝试获取当前价格
-                error_price = current_price if 'current_price' in dir() else 0
-
                 trade = Trade(
                     user_id=user.id,
                     symbol=strategy.symbol,
                     side=TradeSide.BUY,
-                    price=error_price,
+                    price=current_price,
                     quantity=0,
                     leverage=1,
                     trade_type=TradeType.ERROR,
                     market_data=json.dumps({
                         "error": error_message,
-                        "exception": str(e)
+                        "exception_type": exc_type,
+                        "exception": exc_detail
                     })
                 )
                 db.add(trade)
@@ -473,20 +509,73 @@ async def execute_single_strategy(db: Session, strategy: PromptConfig):
                 strategy.last_executed_at = get_local_time()
 
                 db.commit()
-        except Exception:
+        except Exception as e:
+            logger.error(f"策略 {strategy.name if strategy else 'unknown'} 异常记录入库失败: {e}")
             db.rollback()
 
 
+def strip_json_comments(json_str: str) -> str:
+    """
+    移除 JSON 中的 // 单行注释和 /* */ 块注释，正确跳过字符串内部的 //
+    """
+    result = []
+    i = 0
+    in_string = False
+    escaped = False
+
+    while i < len(json_str):
+        char = json_str[i]
+
+        if escaped:
+            result.append(char)
+            escaped = False
+            i += 1
+            continue
+
+        if char == '\\' and in_string:
+            result.append(char)
+            escaped = True
+            i += 1
+            continue
+
+        if char == '"':
+            in_string = not in_string
+            result.append(char)
+            i += 1
+            continue
+
+        if not in_string:
+            # // 单行注释：跳到行尾
+            if char == '/' and i + 1 < len(json_str) and json_str[i + 1] == '/':
+                while i < len(json_str) and json_str[i] != '\n':
+                    i += 1
+                continue
+            # /* */ 块注释
+            if char == '/' and i + 1 < len(json_str) and json_str[i + 1] == '*':
+                i += 2
+                while i < len(json_str) - 1:
+                    if json_str[i] == '*' and json_str[i + 1] == '/':
+                        i += 2
+                        break
+                    i += 1
+                continue
+
+        result.append(char)
+        i += 1
+
+    return ''.join(result)
+
+
 def extract_json_from_content(content: str) -> str:
-    """从 AI 响应中提取 JSON，支持 markdown 代码块包裹的情况"""
+    """从 AI 响应中提取 JSON，支持 markdown 代码块包裹以及 // /* */ 注释"""
     # 尝试提取 ```json ... ``` 或 ``` ... ``` 块
     match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
     if match:
-        return match.group(1)
+        return strip_json_comments(match.group(1))
     # 尝试直接找第一个 { ... } 块
     match = re.search(r'\{.*\}', content, re.DOTALL)
     if match:
-        return match.group(0)
+        return strip_json_comments(match.group(0))
     return content
 
 
@@ -566,9 +655,15 @@ async def execute_open_position(db: Session, user: User, strategy: PromptConfig,
         margin = notional_value / leverage
 
         # 检查余额是否足够
+<<<<<<< HEAD
         if user.balance < margin + fee_paid:
             error_msg = f"余额不足 (需要 ${margin + fee_paid:.2f}, 可用 ${user.balance:.2f})"
             logger.warning(f"策略 {strategy.name} 开仓失败: {error_msg}")
+=======
+        if user.balance < margin:
+            error_msg = f"余额不足 (需要 ${margin:.2f}, 可用 ${user.balance:.2f})"
+            logger.error(f"策略 {strategy.name} 开仓失败: {error_msg}")
+>>>>>>> b555eed3e2ff0624971369bd2b2dc373eed5285e
 
             # 记录失败到交易历史
             market_data_json = json.dumps({
@@ -682,8 +777,9 @@ async def execute_open_position(db: Session, user: User, strategy: PromptConfig,
             )
             db.add(trade)
             db.commit()
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"策略 {strategy.name} 开仓失败记录入库失败: {e}")
+            db.rollback()
 
         db.rollback()
         return False
@@ -733,11 +829,11 @@ async def execute_close_positions(db: Session, user: User, strategy: PromptConfi
         total_pnl = 0
 
         for position in positions:
-            # 计算盈亏
+            # 计算盈亏（保证金 = 开仓价*数量/杠杆，杠杆效果已在保证金中体现，不重复乘）
             if position.side == TradeSide.LONG:
-                pnl = (current_price - position.entry_price) * position.quantity * position.leverage
+                pnl = (current_price - position.entry_price) * position.quantity
             else:
-                pnl = (position.entry_price - current_price) * position.quantity * position.leverage
+                pnl = (position.entry_price - current_price) * position.quantity
 
             notional_value = calculate_notional_value(current_price, position.quantity)
             fee_paid = calculate_fee(current_price, position.quantity)
@@ -833,8 +929,9 @@ async def execute_close_positions(db: Session, user: User, strategy: PromptConfi
             )
             db.add(trade)
             db.commit()
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"策略 {strategy.name} 平仓失败记录入库失败: {e}")
+            db.rollback()
 
         db.rollback()
         return False

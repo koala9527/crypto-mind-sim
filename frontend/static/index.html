@@ -518,9 +518,12 @@
                             placeholder="sk-xxxxxxxxxxxxxxxx"
                             class="w-full input-field rounded px-4 py-2"
                         >
+<<<<<<< HEAD
                         <div class="text-xs mt-1" style="color: var(--text-secondary)">
                             AI 配置将保存到当前账号下，便于不同账号分别管理
                         </div>
+=======
+>>>>>>> b555eed3e2ff0624971369bd2b2dc373eed5285e
                     </div>
 
                     <div>
@@ -741,15 +744,15 @@
                             <div class="grid grid-cols-2 gap-2 text-sm">
                                 <div>• 后端：FastAPI + Python</div>
                                 <div>• 前端：Tailwind CSS + Chart.js</div>
-                                <div>• 数据库：SQLite + SQLAlchemy</div>
+                                <div>• 数据库：PostgreSQL + SQLAlchemy</div>
                                 <div>• 行情：CCXT 统一接口</div>
-                                <div>• AI：Claude API 决策引擎</div>
+                                <div>• AI：多模型 API 决策引擎</div>
                                 <div>• 部署：Docker 容器化</div>
                             </div>
                         </section>
 
                         <section class="text-center pt-4">
-                            <p class="text-sm">版本 v1.0.0 | © 2024 CryptoMindSim | 仅供学习交流使用</p>
+                            <p class="text-sm">版本 v1.0.0 | © 2026 CryptoMindSim | 仅供学习交流使用</p>
                         </section>
                     </div>
                 </div>
@@ -779,13 +782,14 @@
 
                         <section>
                             <h3 class="text-lg font-semibold mb-3 flex items-center gap-2" style="color: var(--text-primary)">
-                                <span class="badge badge-info">2</span> AI 决策系统
+                                <span class="badge badge-info">2</span> AI 自动交易策略
                             </h3>
                             <ul class="space-y-2 ml-8">
-                                <li>• 在"AI决策"标签页查看市场分析</li>
-                                <li>• 选择并激活AI策略配置</li>
-                                <li>• 点击"运行分析"获取AI建议</li>
-                                <li>• 可选择"执行AI交易"自动交易</li>
+                                <li>• 在右侧"AI 策略"标签页点击"创建我的策略"</li>
+                                <li>• 填写策略名称、选择交易对、设置执行频率（分钟）和杠杆倍数</li>
+                                <li>• 在设置中配置您的 AI API Key 和模型（支持 GPT、Claude、Gemini、DeepSeek 等）</li>
+                                <li>• 点击"启动策略"后，系统将按设定频率自动调用 AI 分析并执行交易</li>
+                                <li>• 策略面板实时显示最近一次 AI 决策（OPEN/CLOSE/HOLD）</li>
                             </ul>
                         </section>
 
@@ -811,8 +815,9 @@
                             <ul class="space-y-2 ml-8">
                                 <li>• 右侧排行榜显示全平台收益率排名</li>
                                 <li>• ROI（收益率）= (当前总资产 - 初始资金) / 初始资金 × 100%</li>
-                                <li>• 总资产 = 账户余额 + 持仓价值</li>
-                                <li>• 系统统计显示平台实时数据</li>
+                                <li>• 总资产 = 账户余额 + 持仓价值（保证金 + 未实现盈亏）</li>
+                                <li>• 盈亏计算：(平仓价 - 开仓价) × 数量，杠杆通过保证金比例放大收益率</li>
+                                <li>• 系统统计显示平台实时注册人数、持仓数和交易笔数</li>
                             </ul>
                         </section>
                     </div>
@@ -877,7 +882,7 @@
                                 <span class="faq-icon" id="faq-icon-4">▼</span>
                             </div>
                             <div class="faq-answer" id="faq-answer-4">
-                                <p>平台集成了基于 Claude AI 的决策引擎，可以根据配置的策略提示词（Prompt）分析市场数据，生成交易建议（BUY/SELL/HOLD）。您可以在后台配置不同的策略，系统会定期执行分析并记录决策日志。</p>
+                                <p>平台集成了多种主流 AI 大模型的决策引擎（支持 GPT、Claude、Gemini、DeepSeek、Grok、Kimi、Qwen 等），您可以在"设置"中配置对应的 API Key 和模型。创建并激活策略后，系统会按您设定的频率（最短 1 分钟）自动获取市场指标，调用 AI 生成 OPEN/CLOSE/HOLD 决策并执行交易，同时记录完整决策日志。</p>
                             </div>
                         </div>
 
@@ -897,7 +902,7 @@
                                 <span class="faq-icon" id="faq-icon-6">▼</span>
                             </div>
                             <div class="faq-answer" id="faq-answer-6">
-                                <p>如果您的账户余额归零且无持仓，可以联系管理员重置账户，或者注册一个新账户重新开始。这是模拟平台的优势 —— 可以无限次尝试，不断优化交易策略。</p>
+                                <p>如果您的账户余额归零且无持仓，可以在"设置"页面点击"重置账户"，系统将清空所有交易记录并恢复初始 10,000 USDT 资金。这是模拟平台的优势 —— 可以无限次重置，不断优化交易策略。</p>
                             </div>
                         </div>
 
@@ -908,9 +913,9 @@
                             </div>
                             <div class="faq-answer" id="faq-answer-7">
                                 <p>• 价格行情：每 60 秒从交易所拉取最新数据<br>
-                                • 持仓盈亏：实时计算并更新<br>
-                                • 排行榜：每 3 秒刷新一次<br>
-                                • 页面数据：登录后每 3 秒自动刷新</p>
+                                • 持仓盈亏：随行情更新（每 60 秒）自动重算<br>
+                                • 页面数据：登录后每 3 秒自动刷新全部数据（含持仓、余额、历史、排行榜）<br>
+                                • 也可点击顶部"刷新"按钮手动立即更新</p>
                             </div>
                         </div>
                     </div>
@@ -1027,7 +1032,18 @@
                     <div class="card rounded-lg p-6">
                         <div class="flex justify-between items-center mb-4">
                             <h2 class="text-xl font-bold">总资产曲线</h2>
-                            <div class="text-sm text-gray-500" id="currentPrice"></div>
+                            <div class="flex items-center gap-3">
+                                <div class="text-sm text-gray-500" id="currentPrice"></div>
+                                <div class="flex items-center gap-2">
+                                    <span id="lastRefreshTime" class="text-xs" style="color: var(--text-secondary)"></span>
+                                    <button id="refreshBtn" onclick="refreshData()" class="flex items-center gap-1 px-3 py-1.5 rounded text-sm btn-secondary" title="刷新数据">
+                                        <svg id="refreshIcon" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                        </svg>
+                                        <span>刷新</span>
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                         <canvas id="priceChart" height="80"></canvas>
                     </div>
@@ -1148,8 +1164,8 @@
                     </div>
                 </div>
                 <div class="border-t mt-6 pt-6 text-center text-xs" style="border-color: var(--border-color)">
-                    <p>© 2024 CryptoMindSim. All Rights Reserved. | Made with 💜 for Crypto Enthusiasts</p>
-                    <p class="mt-1">Powered by FastAPI • Claude AI • CCXT • Chart.js</p>
+                    <p>© 2026 CryptoMindSim. All Rights Reserved. | Made with 💜 for Crypto Enthusiasts</p>
+                    <p class="mt-1">Powered by FastAPI • Multi-Model AI • CCXT • Chart.js</p>
                 </div>
             </div>
         </footer>
