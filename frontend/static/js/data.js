@@ -1,4 +1,4 @@
-// ==================== 数据更新 ====================
+﻿// ==================== 数据更新 ====================
 
 // updateStrategies 是 updatePrompts 的别名
 const updateStrategies = (...args) => updatePrompts(...args);
@@ -102,33 +102,80 @@ async function updatePositions() {
             return;
         }
 
+        const formatPercent = (value) => value == null ? '--' : `${Number(value).toFixed(2)}%`;
+        const formatDistance = (value) => value == null ? '暂无' : `${Number(value).toFixed(2)}%`;
+        const formatDuration = (seconds) => {
+            if (!seconds) return '刚开仓';
+            if (seconds < 60) return `${seconds}秒`;
+            if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)}小时`;
+            return `${Math.floor(seconds / 86400)}天`;
+        };
+        const riskBadgeClass = (level) => {
+            if (level === 'HIGH') return 'badge-danger';
+            if (level === 'MEDIUM') return 'badge-warning';
+            return 'badge-success';
+        };
+        const riskText = (level) => level === 'HIGH' ? '高风险' : level === 'MEDIUM' ? '中风险' : '低风险';
+
         container.innerHTML = positionsArray.map(p => {
             const pnlClass = p.unrealized_pnl >= 0 ? 'profit' : 'loss';
+            const roiClass = Number(p.roi_pct || 0) >= 0 ? 'profit' : 'loss';
             const sideClass = p.side === 'LONG' ? 'badge-success' : 'badge-danger';
             return `
                 <div class="card rounded p-4">
-                    <div class="flex justify-between items-start mb-3">
+                    <div class="flex justify-between items-start mb-3 gap-3">
                         <div>
-                            <span class="font-bold text-lg">${p.symbol}</span>
-                            <span class="badge ${sideClass} ml-2">${p.side} ${p.leverage}x</span>
+                            <span class="font-bold text-lg">${escapeHtml(p.symbol)}</span>
+                            <span class="badge ${sideClass} ml-2">${escapeHtml(p.side)} ${Number(p.leverage)}x</span>
+                            <span class="badge ${riskBadgeClass(p.risk_level)} ml-2">${riskText(p.risk_level)}</span>
                         </div>
-                        <button onclick="closePosition(${p.id})"
-                            class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-sm transition">
-                            平仓
-                        </button>
+                        <div class="flex gap-2">
+                            <button onclick="showPositionDetail(${p.id})"
+                                class="px-3 py-1 rounded text-sm transition"
+                                style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color);">
+                                详情
+                            </button>
+                            <button onclick="closePosition(${p.id})"
+                                class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-sm transition">
+                                平仓
+                            </button>
+                        </div>
                     </div>
-                    <div class="grid grid-cols-3 gap-2 text-sm">
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mb-3">
                         <div>
                             <div style="color: var(--text-secondary)">开仓价</div>
-                            <div class="font-semibold">${p.entry_price.toFixed(2)}</div>
+                            <div class="font-semibold">${Number(p.entry_price).toFixed(2)}</div>
                         </div>
                         <div>
-                            <div style="color: var(--text-secondary)">数量</div>
-                            <div class="font-semibold">${p.quantity}</div>
+                            <div style="color: var(--text-secondary)">现价</div>
+                            <div class="font-semibold">${Number(p.current_price).toFixed(2)}</div>
                         </div>
                         <div>
-                            <div style="color: var(--text-secondary)">盈亏</div>
-                            <div class="font-semibold ${pnlClass}">${p.unrealized_pnl.toFixed(2)}</div>
+                            <div style="color: var(--text-secondary)">浮动盈亏</div>
+                            <div class="font-semibold ${pnlClass}">${p.unrealized_pnl >= 0 ? '+' : ''}${Number(p.unrealized_pnl).toFixed(2)} USDT</div>
+                        </div>
+                        <div>
+                            <div style="color: var(--text-secondary)">收益率</div>
+                            <div class="font-semibold ${roiClass}">${formatPercent(p.roi_pct)}</div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                        <div>
+                            <div style="color: var(--text-secondary)">仓位价值</div>
+                            <div>${Number(p.notional_value).toFixed(2)} USDT</div>
+                        </div>
+                        <div>
+                            <div style="color: var(--text-secondary)">估算平仓手续费</div>
+                            <div>${Number(p.estimated_fee_to_close).toFixed(4)} USDT</div>
+                        </div>
+                        <div>
+                            <div style="color: var(--text-secondary)">离爆仓价距离</div>
+                            <div>${formatDistance(p.distance_to_liquidation_pct)}</div>
+                        </div>
+                        <div>
+                            <div style="color: var(--text-secondary)">持仓时长</div>
+                            <div>${formatDuration(p.holding_seconds)}</div>
                         </div>
                     </div>
                 </div>
@@ -175,10 +222,10 @@ async function updateTradeHistory() {
                     summary = reason.slice(0, 60) + (reason.length > 60 ? '…' : '');
                 } else if (t.trade_type === 'OPEN') {
                     statusBadge = `<span class="badge badge-success text-xs">开仓 ${t.side} ${t.leverage}x</span>`;
-                    summary = `${t.symbol} · 数量 ${t.quantity}`;
+                    summary = `${t.position_side || t.side} · 保证金 ${Number(t.margin_used || 0).toFixed(2)} · 手续费 ${Number(t.fee_paid || 0).toFixed(2)}`;
                 } else if (t.trade_type === 'CLOSE') {
                     statusBadge = `<span class="badge badge-info text-xs">平仓</span>`;
-                    summary = `${t.symbol} · 盈亏 ${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)} USDT`;
+                    summary = `${t.position_side || t.side} · ROI ${Number(t.roi_pct || 0).toFixed(2)}% · 盈亏 ${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)} USDT`;
                 } else {
                     statusBadge = `<span class="badge badge-info text-xs">${t.trade_type}</span>`;
                     summary = t.symbol;

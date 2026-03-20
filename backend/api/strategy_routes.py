@@ -8,6 +8,8 @@ from typing import List, Optional
 from datetime import datetime
 from backend.core.database import get_db
 from backend.core.models import User, PromptConfig, get_local_time
+from backend.core.security import require_same_user
+from backend.core.trading_pairs import DEFAULT_SYMBOL, POPULAR_TRADING_PAIRS, POPULAR_SYMBOL_CODES
 from backend.services.ai_service import AVAILABLE_MODELS
 from backend.utils.init_prompts import DEFAULT_PROMPTS
 import logging
@@ -22,7 +24,7 @@ class StrategyCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, description="策略名称")
     description: Optional[str] = Field(None, description="策略描述")
     prompt_text: str = Field(..., min_length=1, description="AI 提示词")
-    symbol: str = Field(default="BTC/USDT", description="交易对")
+    symbol: str = Field(default=DEFAULT_SYMBOL, description="交易对")
     execution_interval: int = Field(default=1, ge=1, description="执行频率（分钟，最小1分钟）")
 
 
@@ -69,19 +71,8 @@ class PresetStrategyInfo(BaseModel):
     prompt_text: str
 
 
-# 支持的交易对列表 (Top 10 加密货币)
-AVAILABLE_SYMBOLS = [
-    {"symbol": "BTC/USDT", "name": "比特币", "description": "Bitcoin"},
-    {"symbol": "ETH/USDT", "name": "以太坊", "description": "Ethereum"},
-    {"symbol": "BNB/USDT", "name": "币安币", "description": "Binance Coin"},
-    {"symbol": "SOL/USDT", "name": "Solana", "description": "Solana"},
-    {"symbol": "XRP/USDT", "name": "瑞波币", "description": "Ripple"},
-    {"symbol": "ADA/USDT", "name": "艾达币", "description": "Cardano"},
-    {"symbol": "AVAX/USDT", "name": "雪崩币", "description": "Avalanche"},
-    {"symbol": "DOT/USDT", "name": "波卡", "description": "Polkadot"},
-    {"symbol": "POL/USDT", "name": "马蹄币", "description": "Polygon"},  # MATIC已更名为POL
-    {"symbol": "LINK/USDT", "name": "链环", "description": "Chainlink"},
-]
+# 支持的交易对列表（主流高流动性 USDT 交易对）
+AVAILABLE_SYMBOLS = POPULAR_TRADING_PAIRS
 
 
 @router.get("/symbols", response_model=List[SymbolInfo])
@@ -99,15 +90,12 @@ async def get_preset_strategies():
 @router.get("", response_model=List[StrategyResponse])
 async def get_user_strategies(
     user_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_same_user)
 ):
     """获取用户的所有策略"""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="用户不存在")
-
     strategies = db.query(PromptConfig).filter(
-        PromptConfig.user_id == user_id
+        PromptConfig.user_id == current_user.id
     ).order_by(PromptConfig.created_at.desc()).all()
 
     return strategies
@@ -117,12 +105,13 @@ async def get_user_strategies(
 async def get_strategy(
     strategy_id: int,
     user_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_same_user)
 ):
     """获取单个策略详情"""
     strategy = db.query(PromptConfig).filter(
         PromptConfig.id == strategy_id,
-        PromptConfig.user_id == user_id
+        PromptConfig.user_id == current_user.id
     ).first()
 
     if not strategy:
@@ -135,7 +124,8 @@ async def get_strategy(
 async def create_strategy(
     user_id: int,
     strategy: StrategyCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_same_user)
 ):
     """
     创建新策略
@@ -148,20 +138,18 @@ async def create_strategy(
     - 执行频率（最小1分钟）
     """
     # 验证用户存在
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="用户不存在")
+    user = current_user
 
     # 检查用户是否已有策略
     existing = db.query(PromptConfig).filter(
-        PromptConfig.user_id == user_id
+        PromptConfig.user_id == current_user.id
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail="您已经有一个策略，请编辑现有策略或删除后再创建")
 
     # 创建策略
     new_strategy = PromptConfig(
-        user_id=user_id,
+        user_id=current_user.id,
         name=strategy.name,
         description=strategy.description,
         prompt_text=strategy.prompt_text,
@@ -184,12 +172,13 @@ async def update_strategy(
     strategy_id: int,
     user_id: int,
     strategy_update: StrategyUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_same_user)
 ):
     """更新策略"""
     strategy = db.query(PromptConfig).filter(
         PromptConfig.id == strategy_id,
-        PromptConfig.user_id == user_id
+        PromptConfig.user_id == current_user.id
     ).first()
 
     if not strategy:
@@ -200,14 +189,13 @@ async def update_strategy(
 
     # 验证交易对
     if "symbol" in update_data:
-        supported_symbols = [s["symbol"] for s in AVAILABLE_SYMBOLS]
-        if update_data["symbol"] not in supported_symbols:
+        if update_data["symbol"] not in POPULAR_SYMBOL_CODES:
             raise HTTPException(status_code=400, detail=f"不支持的交易对: {update_data['symbol']}")
 
     # 检查名称重复
     if "name" in update_data:
         existing = db.query(PromptConfig).filter(
-            PromptConfig.user_id == user_id,
+            PromptConfig.user_id == current_user.id,
             PromptConfig.name == update_data["name"],
             PromptConfig.id != strategy_id
         ).first()
@@ -229,12 +217,13 @@ async def update_strategy(
 async def delete_strategy(
     strategy_id: int,
     user_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_same_user)
 ):
     """删除策略"""
     strategy = db.query(PromptConfig).filter(
         PromptConfig.id == strategy_id,
-        PromptConfig.user_id == user_id
+        PromptConfig.user_id == current_user.id
     ).first()
 
     if not strategy:
@@ -251,7 +240,8 @@ async def delete_strategy(
 async def activate_strategy(
     strategy_id: int,
     user_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_same_user)
 ):
     """
     激活策略
@@ -260,7 +250,7 @@ async def activate_strategy(
     """
     strategy = db.query(PromptConfig).filter(
         PromptConfig.id == strategy_id,
-        PromptConfig.user_id == user_id
+        PromptConfig.user_id == current_user.id
     ).first()
 
     if not strategy:
@@ -281,12 +271,13 @@ async def activate_strategy(
 async def deactivate_strategy(
     strategy_id: int,
     user_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_same_user)
 ):
     """停用策略"""
     strategy = db.query(PromptConfig).filter(
         PromptConfig.id == strategy_id,
-        PromptConfig.user_id == user_id
+        PromptConfig.user_id == current_user.id
     ).first()
 
     if not strategy:

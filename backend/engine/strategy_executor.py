@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from backend.core.database import SessionLocal
 from backend.core.models import PromptConfig, User, Position, MarketPrice, Trade, TradeSide, TradeType, get_local_time
+from backend.core.trade_utils import calculate_fee, calculate_holding_seconds, calculate_liquidation_price, calculate_notional_value, calculate_roi_pct
 from backend.services.ai_service import ai_service
 
 logger = logging.getLogger(__name__)
@@ -560,11 +561,13 @@ async def execute_open_position(db: Session, user: User, strategy: PromptConfig,
         side = TradeSide.LONG if direction == "long" else TradeSide.SHORT
 
         # 计算保证金
-        margin = (current_price * quantity) / leverage
+        notional_value = calculate_notional_value(current_price, quantity)
+        fee_paid = calculate_fee(current_price, quantity)
+        margin = notional_value / leverage
 
         # 检查余额是否足够
-        if user.balance < margin:
-            error_msg = f"余额不足 (需要 ${margin:.2f}, 可用 ${user.balance:.2f})"
+        if user.balance < margin + fee_paid:
+            error_msg = f"余额不足 (需要 ${margin + fee_paid:.2f}, 可用 ${user.balance:.2f})"
             logger.warning(f"策略 {strategy.name} 开仓失败: {error_msg}")
 
             # 记录失败到交易历史
@@ -590,7 +593,8 @@ async def execute_open_position(db: Session, user: User, strategy: PromptConfig,
             return False
 
         # 扣除保证金
-        user.balance -= margin
+        balance_before = user.balance
+        user.balance -= margin + fee_paid
         user.updated_at = get_local_time()
 
         # 创建持仓
@@ -602,8 +606,10 @@ async def execute_open_position(db: Session, user: User, strategy: PromptConfig,
             quantity=quantity,
             leverage=leverage,
             margin=margin,
+            liquidation_price=calculate_liquidation_price(current_price, leverage, side),
         )
         db.add(new_position)
+        db.flush()
 
         # 创建交易记录时，保存完整市场数据
         market_data_json = json.dumps({
@@ -617,11 +623,23 @@ async def execute_open_position(db: Session, user: User, strategy: PromptConfig,
         # 记录交易历史
         trade = Trade(
             user_id=user.id,
+            position_id=new_position.id,
             symbol=strategy.symbol,
             side=TradeSide.BUY if side == TradeSide.LONG else TradeSide.SELL,
+            position_side=side,
             price=current_price,
             quantity=quantity,
             leverage=leverage,
+            margin_used=margin,
+            notional_value=notional_value,
+            fee_paid=fee_paid,
+            balance_before=balance_before,
+            balance_after=user.balance,
+            roi_pct=calculate_roi_pct(0.0, margin),
+            entry_price_snapshot=current_price,
+            liquidation_price_snapshot=new_position.liquidation_price,
+            close_reason="STRATEGY_OPEN",
+            execution_source="AI",
             trade_type=TradeType.OPEN,
             market_data=market_data_json
         )
@@ -721,8 +739,12 @@ async def execute_close_positions(db: Session, user: User, strategy: PromptConfi
             else:
                 pnl = (position.entry_price - current_price) * position.quantity * position.leverage
 
+            notional_value = calculate_notional_value(current_price, position.quantity)
+            fee_paid = calculate_fee(current_price, position.quantity)
+            balance_before = user.balance
+
             # 退还保证金 + 盈亏
-            user.balance += position.margin + pnl
+            user.balance += position.margin + pnl - fee_paid
             user.updated_at = get_local_time()
 
             # 更新持仓状态
@@ -747,12 +769,25 @@ async def execute_close_positions(db: Session, user: User, strategy: PromptConfi
             # 记录交易历史
             trade = Trade(
                 user_id=user.id,
+                position_id=position.id,
                 symbol=strategy.symbol,
                 side=TradeSide.SELL if position.side == TradeSide.LONG else TradeSide.BUY,
+                position_side=position.side,
                 price=current_price,
                 quantity=position.quantity,
                 leverage=position.leverage,
+                margin_used=position.margin,
+                notional_value=notional_value,
                 pnl=pnl,
+                fee_paid=fee_paid,
+                balance_before=balance_before,
+                balance_after=user.balance,
+                roi_pct=calculate_roi_pct(pnl, position.margin),
+                holding_seconds=calculate_holding_seconds(position.created_at, position.closed_at),
+                entry_price_snapshot=position.entry_price,
+                liquidation_price_snapshot=position.liquidation_price,
+                close_reason="STRATEGY_CLOSE",
+                execution_source="AI",
                 trade_type=TradeType.CLOSE,
                 market_data=market_data_json
             )

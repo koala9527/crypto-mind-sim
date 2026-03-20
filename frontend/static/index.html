@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -428,7 +428,7 @@
 
         <!-- 登录/注册模态框 -->
         <div id="loginModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div class="card rounded-lg p-6 max-w-md w-full mx-4">
+            <div class="card rounded-lg p-6 max-w-lg w-full mx-4">
                 <div class="flex justify-between items-center mb-6">
                     <h2 class="text-xl font-bold" id="modalTitle">登录</h2>
                     <button onclick="hideLoginModal()" class="text-2xl" style="color: var(--text-secondary)">&times;</button>
@@ -452,6 +452,39 @@
                             placeholder="请输入密码"
                             class="w-full input-field rounded px-4 py-2"
                         >
+                    </div>
+                    <div id="registerAiFields" class="hidden space-y-4">
+                        <div class="rounded p-3 text-sm" style="background: var(--bg-primary); color: var(--text-secondary);">
+                            注册时请一并填写 AI 配置，配置将跟随当前账号保存；注册后也可以在“设置”里修改。
+                        </div>
+                        <div>
+                            <label class="block text-sm mb-2" style="color: var(--text-secondary)">AI API Key</label>
+                            <input
+                                type="password"
+                                id="registerApiKey"
+                                placeholder="请输入 AI API Key"
+                                class="w-full input-field rounded px-4 py-2"
+                            >
+                        </div>
+                        <div>
+                            <label class="block text-sm mb-2" style="color: var(--text-secondary)">AI Base URL（可选）</label>
+                            <input
+                                type="text"
+                                id="registerBaseUrl"
+                                placeholder="https://api.openai.com/v1"
+                                class="w-full input-field rounded px-4 py-2"
+                            >
+                        </div>
+                        <div>
+                            <label class="block text-sm mb-2" style="color: var(--text-secondary)">AI 模型</label>
+                            <input
+                                type="text"
+                                id="registerAiModel"
+                                placeholder="claude-4.5-opus"
+                                class="w-full input-field rounded px-4 py-2"
+                                value="claude-4.5-opus"
+                            >
+                        </div>
                     </div>
                     <button id="loginBtn" onclick="handleLogin()" class="w-full btn-primary py-3 rounded font-semibold">
                         登录
@@ -486,7 +519,7 @@
                             class="w-full input-field rounded px-4 py-2"
                         >
                         <div class="text-xs mt-1" style="color: var(--text-secondary)">
-                            API Key 将保存在浏览器本地，不会上传到服务器
+                            AI 配置将保存到当前账号下，便于不同账号分别管理
                         </div>
                     </div>
 
@@ -589,10 +622,26 @@
                     <!-- 交易对选择 -->
                     <div>
                         <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">交易对</label>
-                        <select id="strategySymbol" class="w-full input-field rounded px-4 py-2">
+                        <select id="strategySymbol" class="w-full input-field rounded px-4 py-2" onchange="onStrategySymbolChange()">
                             <option value="">加载中...</option>
                         </select>
                         <div class="text-xs mt-1" style="color: var(--text-secondary)">选择您要交易的币种</div>
+                        <div id="strategyPositionConflictNotice" class="hidden mt-3 rounded-lg p-3 border" style="background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.35);">
+                            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                <div>
+                                    <div class="font-semibold" style="color: var(--warning)">检测到当前持仓与目标交易对不一致</div>
+                                    <div id="strategyPositionConflictText" class="text-sm mt-1" style="color: var(--text-secondary)"></div>
+                                </div>
+                                <div class="flex gap-2 flex-wrap">
+                                    <button type="button" onclick="closeConflictingPositionsBeforeSwitch()" class="px-3 py-2 rounded font-semibold" style="background-color: var(--danger); color: white;">
+                                        一键平仓当前持仓
+                                    </button>
+                                    <button type="button" onclick="dismissStrategyPositionConflict()" class="px-3 py-2 rounded font-semibold" style="background-color: var(--bg-secondary); color: var(--text-secondary);">
+                                        暂不处理
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- 执行频率（分钟） -->
@@ -884,6 +933,18 @@
             </div>
         </div>
 
+        <div id="positionDetailModal" class="modal-overlay hidden" onclick="if(event.target === this) hidePositionDetail()">
+            <div class="modal-content w-full max-w-4xl mx-4" onclick="event.stopPropagation()" style="max-height: 90vh; overflow-y: auto;">
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold">📌 持仓详情</h2>
+                        <button onclick="hidePositionDetail()" class="text-3xl" style="color: var(--text-secondary)">&times;</button>
+                    </div>
+                    <div id="positionDetailContent"></div>
+                </div>
+            </div>
+        </div>
+
         <!-- 悬浮帮助按钮组 -->
         <div class="help-fab">
             <div class="help-btn" onclick="showAboutModal()" title="项目介绍">
@@ -1111,3 +1172,4 @@
 
 </body>
 </html>
+

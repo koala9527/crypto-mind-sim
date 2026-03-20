@@ -1,7 +1,7 @@
-[project]
+﻿[project]
 name = "crypto-mind-sim"
 version = "0.1.0"
-description = "Add your description here"
+description = "面向新手的加密货币 AI 模拟交易学习项目，基于 SQLite 与真实行情数据。"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -15,6 +15,9 @@ dependencies = [
     "apscheduler==3.10.4",
     "python-multipart==0.0.20",
     "httpx==0.27.0",
-    "psycopg[binary]>=3.1",
-    "alembic>=1.14",
+    "pytz==2024.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/koala9527/crypto-mind-sim"
+Repository = "https://github.com/koala9527/crypto-mind-sim"

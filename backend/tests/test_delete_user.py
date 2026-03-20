@@ -1,151 +1,245 @@
-"""
-测试用户注销功能
-"""
-import requests
-import json
+﻿import os
+import unittest
 
-BASE_URL = "http://localhost:8000"
+os.environ["DATABASE_URL"] = "sqlite:///./test_open_source.db"
+os.environ["DISABLE_SCHEDULER"] = "true"
+os.environ["SECRET_KEY"] = "test-secret-key"
+
+from fastapi.testclient import TestClient
+
+from backend.core.database import SessionLocal, engine
+from backend.core.main import app
+from backend.core.models import Base, Position, Trade, TradeSide, TradeType, User
+from backend.engine.engine import trading_engine
 
 
-def test_delete_user():
-    """测试注销用户功能"""
-    print("=" * 60)
-    print("测试用户注销功能")
-    print("=" * 60)
+Base.metadata.drop_all(bind=engine)
+Base.metadata.create_all(bind=engine)
+trading_engine.fetch_current_price = lambda symbol=None: 50000.0
 
-    # 1. 注册测试用户
-    print("\n步骤1: 注册测试用户...")
-    register_data = {
-        "username": "test_delete_user",
-        "password": "test123"
+
+def register_payload(username: str, password: str = "test1234"):
+    return {
+        "username": username,
+        "password": password,
+        "ai_api_key": f"sk-{username}-demo-key",
+        "ai_base_url": "https://api.openai.com/v1",
+        "ai_model": "claude-4.5-opus",
     }
 
-    response = requests.post(f"{BASE_URL}/api/register", json=register_data)
-    if response.status_code == 201:
-        user = response.json()
-        user_id = user['id']
-        print(f"✓ 用户注册成功: {user['username']} (ID: {user_id})")
-    else:
-        print(f"✗ 注册失败: {response.text}")
-        return
 
-    # 2. 创建一些数据（持仓、交易等）
-    print(f"\n步骤2: 为用户创建测试数据...")
+class DeleteUserTestCase(unittest.TestCase):
+    def setUp(self):
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)
+        trading_engine.fetch_current_price = lambda symbol=None: 50000.0
+        self.client = TestClient(app)
+        self.other_client = TestClient(app)
 
-    # 创建持仓
-    position_data = {
-        "side": "LONG",
-        "leverage": 5,
-        "quantity": 0.01
-    }
-    response = requests.post(
-        f"{BASE_URL}/api/users/{user_id}/positions",
-        json=position_data
-    )
-    if response.status_code == 201:
-        print("✓ 持仓创建成功")
-    else:
-        print(f"✗ 持仓创建失败: {response.text}")
+    def tearDown(self):
+        self.client.close()
+        self.other_client.close()
 
-    # 3. 查询用户数据
-    print(f"\n步骤3: 查询用户数据...")
-    response = requests.get(f"{BASE_URL}/api/users/{user_id}")
-    if response.ok:
-        user_data = response.json()
-        print(f"✓ 用户信息: {json.dumps(user_data, indent=2, ensure_ascii=False)}")
+    def test_delete_user_clears_account_and_cookie(self):
+        register = self.client.post(
+            "/api/register",
+            json=register_payload("alice"),
+        )
+        self.assertEqual(register.status_code, 201)
+        user_id = register.json()["id"]
 
-    response = requests.get(f"{BASE_URL}/api/users/{user_id}/positions")
-    if response.ok:
-        positions = response.json()
-        print(f"✓ 持仓数量: {len(positions)}")
+        position = self.client.post(
+            f"/api/users/{user_id}/positions",
+            json={"side": "LONG", "leverage": 2, "quantity": 0.01},
+        )
+        self.assertEqual(position.status_code, 201)
 
-    # 4. 删除用户
-    print(f"\n步骤4: 注销用户账号...")
-    response = requests.delete(f"{BASE_URL}/api/users/{user_id}")
-    if response.ok:
-        result = response.json()
-        print(f"✓ 账号注销成功!")
-        print(f"  返回信息: {json.dumps(result, indent=2, ensure_ascii=False)}")
-    else:
-        print(f"✗ 注销失败: {response.text}")
-        return
+        delete_response = self.client.delete(f"/api/users/{user_id}")
+        self.assertEqual(delete_response.status_code, 200)
 
-    # 5. 验证用户已被删除
-    print(f"\n步骤5: 验证用户是否已删除...")
-    response = requests.get(f"{BASE_URL}/api/users/{user_id}")
-    if response.status_code == 404:
-        print("✓ 用户已被成功删除（返回404）")
-    else:
-        print(f"✗ 用户仍然存在: {response.status_code}")
+        follow_up = self.client.get(f"/api/users/{user_id}")
+        self.assertEqual(follow_up.status_code, 401)
 
-    # 6. 验证关联数据已被删除
-    print(f"\n步骤6: 验证关联数据是否已删除...")
-    response = requests.get(f"{BASE_URL}/api/users/{user_id}/positions")
-    if response.status_code == 404:
-        print("✓ 持仓数据已被删除（返回404）")
-    else:
-        print(f"✗ 持仓数据仍然存在")
+        with SessionLocal() as db:
+            self.assertIsNone(db.query(User).filter(User.id == user_id).first())
 
-    print("\n" + "=" * 60)
-    print("测试完成！")
-    print("=" * 60)
+    def test_user_cannot_read_other_user_data(self):
+        alice = self.client.post(
+            "/api/register",
+            json=register_payload("alice"),
+        ).json()
+        bob = self.other_client.post(
+            "/api/register",
+            json=register_payload("bob", "test5678"),
+        ).json()
 
+        forbidden = self.client.get(f"/api/users/{bob['id']}")
+        self.assertEqual(forbidden.status_code, 403)
 
-def test_delete_with_conversations():
-    """测试删除有对话记录的用户"""
-    print("\n" + "=" * 60)
-    print("测试删除有AI对话记录的用户")
-    print("=" * 60)
+        own = self.client.get(f"/api/users/{alice['id']}")
+        self.assertEqual(own.status_code, 200)
 
-    # 1. 注册用户
-    print("\n步骤1: 注册用户...")
-    register_data = {
-        "username": "test_delete_with_ai",
-        "password": "test123"
-    }
-    response = requests.post(f"{BASE_URL}/api/register", json=register_data)
-    if response.status_code == 201:
-        user = response.json()
-        user_id = user['id']
-        print(f"✓ 用户注册成功: ID {user_id}")
-    else:
-        print(f"✗ 注册失败")
-        return
+    def test_trade_detail_contains_beginner_fields(self):
+        register = self.client.post(
+            "/api/register",
+            json=register_payload("carol"),
+        )
+        self.assertEqual(register.status_code, 201)
+        user_id = register.json()["id"]
 
-    # 2. 创建AI对话
-    print(f"\n步骤2: 创建AI对话记录...")
-    conversation_data = {
-        "content": "当前市场趋势如何？"
-    }
-    response = requests.post(
-        f"{BASE_URL}/api/users/{user_id}/conversations",
-        json=conversation_data
-    )
-    if response.status_code == 201:
-        print("✓ AI对话创建成功")
-    else:
-        print(f"✗ 对话创建失败")
+        open_response = self.client.post(
+            f"/api/users/{user_id}/positions",
+            json={"side": "LONG", "leverage": 2, "quantity": 0.01},
+        )
+        self.assertEqual(open_response.status_code, 201)
 
-    # 3. 删除用户
-    print(f"\n步骤3: 注销用户...")
-    response = requests.delete(f"{BASE_URL}/api/users/{user_id}")
-    if response.ok:
-        print("✓ 用户注销成功（包括AI对话记录）")
-    else:
-        print(f"✗ 注销失败: {response.text}")
+        trades = self.client.get(f"/api/users/{user_id}/trades")
+        self.assertEqual(trades.status_code, 200)
+        trade_id = trades.json()["trades"][0]["id"]
 
-    print("\n" + "=" * 60)
+        detail = self.client.get(f"/api/trades/{trade_id}")
+        self.assertEqual(detail.status_code, 200)
+        payload = detail.json()
+
+        self.assertEqual(payload["execution_source"], "MANUAL")
+        self.assertEqual(payload["position_side"], "LONG")
+        self.assertGreater(payload["margin_used"], 0)
+        self.assertGreaterEqual(payload["fee_paid"], 0)
+        self.assertIn("balance_before", payload)
+        self.assertIn("balance_after", payload)
+
+    def test_position_detail_contains_beginner_fields(self):
+        register = self.client.post(
+            "/api/register",
+            json=register_payload("dave"),
+        )
+        self.assertEqual(register.status_code, 201)
+        user_id = register.json()["id"]
+
+        open_response = self.client.post(
+            f"/api/users/{user_id}/positions",
+            json={"side": "LONG", "leverage": 4, "quantity": 0.01},
+        )
+        self.assertEqual(open_response.status_code, 201)
+        position_id = open_response.json()["id"]
+
+        trading_engine.fetch_current_price = lambda symbol=None: 51000.0
+
+        positions = self.client.get(f"/api/users/{user_id}/positions")
+        self.assertEqual(positions.status_code, 200)
+        summary = positions.json()[0]
+        self.assertEqual(summary["current_price"], 51000.0)
+        self.assertIn("roi_pct", summary)
+        self.assertIn("risk_level", summary)
+        self.assertIn("holding_seconds", summary)
+
+        detail = self.client.get(f"/api/positions/{position_id}")
+        self.assertEqual(detail.status_code, 200)
+        payload = detail.json()
+
+        self.assertEqual(payload["current_price"], 51000.0)
+        self.assertGreater(payload["roi_pct"], 0)
+        self.assertIn(payload["risk_level"], ["LOW", "MEDIUM", "HIGH"])
+        self.assertIn("break_even_price", payload)
+        self.assertIn("status_text", payload)
+        self.assertIn("position_explanation", payload)
+        self.assertIn("next_action_tip", payload)
+
+    def test_register_saves_ai_config_with_account(self):
+        register = self.client.post(
+            "/api/register",
+            json=register_payload("erin"),
+        )
+        self.assertEqual(register.status_code, 201)
+        user_id = register.json()["id"]
+
+        ai_config = self.client.get(f"/api/users/{user_id}/ai-config")
+        self.assertEqual(ai_config.status_code, 200)
+        payload = ai_config.json()
+
+        self.assertTrue(payload["configured"])
+        self.assertEqual(payload["base_url"], "https://api.openai.com/v1")
+        self.assertEqual(payload["ai_model"], "claude-4.5-opus")
+        self.assertTrue(payload["api_key_masked"])
+
+    def test_error_trade_returns_error_message(self):
+        register = self.client.post(
+            "/api/register",
+            json=register_payload("frank"),
+        )
+        self.assertEqual(register.status_code, 201)
+        user_id = register.json()["id"]
+
+        with SessionLocal() as db:
+            trade = Trade(
+                user_id=user_id,
+                symbol="BTC/USDT",
+                side=TradeSide.BUY,
+                price=0.0,
+                quantity=0.0,
+                leverage=1,
+                trade_type=TradeType.ERROR,
+                market_data='{"error":"AI 返回格式错误","exception":"JSONDecodeError"}',
+            )
+            db.add(trade)
+            db.commit()
+            db.refresh(trade)
+            trade_id = trade.id
+
+        detail = self.client.get(f"/api/trades/{trade_id}")
+        self.assertEqual(detail.status_code, 200)
+        payload = detail.json()
+
+        self.assertEqual(payload["trade_type"], "ERROR")
+        self.assertEqual(payload["error_message"], "AI 返回格式错误")
+        self.assertIn("market_data", payload)
+
+    def test_bulk_close_positions_by_symbols(self):
+        register = self.client.post(
+            "/api/register",
+            json=register_payload("gina"),
+        )
+        self.assertEqual(register.status_code, 201)
+        user_id = register.json()["id"]
+
+        btc_position = self.client.post(
+            f"/api/users/{user_id}/positions",
+            json={"symbol": "BTC/USDT", "side": "LONG", "leverage": 2, "quantity": 0.01},
+        )
+        self.assertEqual(btc_position.status_code, 201)
+
+        eth_position = self.client.post(
+            f"/api/users/{user_id}/positions",
+            json={"symbol": "ETH/USDT", "side": "LONG", "leverage": 2, "quantity": 0.02},
+        )
+        self.assertEqual(eth_position.status_code, 201)
+
+        bulk_close = self.client.post(
+            f"/api/users/{user_id}/positions/close-all",
+            json={"symbols": ["BTC/USDT"]},
+        )
+        self.assertEqual(bulk_close.status_code, 200)
+        payload = bulk_close.json()
+
+        self.assertEqual(payload["closed_count"], 1)
+        self.assertEqual(payload["requested_symbols"], ["BTC/USDT"])
+
+        with SessionLocal() as db:
+            btc = db.query(Position).filter(Position.user_id == user_id, Position.symbol == "BTC/USDT").first()
+            eth = db.query(Position).filter(Position.user_id == user_id, Position.symbol == "ETH/USDT").first()
+
+            self.assertFalse(btc.is_open)
+            self.assertTrue(eth.is_open)
+
+            close_trade = (
+                db.query(Trade)
+                .filter(Trade.user_id == user_id, Trade.trade_type == TradeType.CLOSE, Trade.symbol == "BTC/USDT")
+                .first()
+            )
+            self.assertIsNotNone(close_trade)
+            self.assertEqual(close_trade.close_reason, "SYMBOL_SWITCH_CLOSE")
 
 
 if __name__ == "__main__":
-    try:
-        # 测试1: 基本删除功能
-        test_delete_user()
+    unittest.main()
 
-        # 测试2: 删除包含AI数据的用户
-        test_delete_with_conversations()
-
-    except Exception as e:
-        print(f"\n✗ 测试出错: {e}")
-        import traceback
-        traceback.print_exc()

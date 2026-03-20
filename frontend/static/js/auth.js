@@ -1,9 +1,12 @@
-// ==================== 用户认证 ====================
+﻿// ==================== 用户认证 ====================
 
 // 处理登录/注册
 async function handleLogin() {
     const username = document.getElementById('modalUsername').value.trim();
     const password = document.getElementById('modalPassword').value.trim();
+    const registerApiKey = document.getElementById('registerApiKey')?.value.trim() || '';
+    const registerBaseUrl = document.getElementById('registerBaseUrl')?.value.trim() || '';
+    const registerAiModel = document.getElementById('registerAiModel')?.value.trim() || 'claude-4.5-opus';
 
     if (!username || !password) {
         showToast(t('enterCredentials'), 'warning');
@@ -15,12 +18,26 @@ async function handleLogin() {
         return;
     }
 
+    if (!isLoginMode && !registerApiKey) {
+        showToast('注册时请填写 AI API Key', 'warning');
+        return;
+    }
+
     try {
         const endpoint = isLoginMode ? '/api/login' : '/api/register';
+        const payload = isLoginMode
+            ? { username, password }
+            : {
+                username,
+                password,
+                ai_api_key: registerApiKey,
+                ai_base_url: registerBaseUrl,
+                ai_model: registerAiModel,
+            };
         const response = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify(payload)
         });
 
         if (response.ok) {
@@ -60,7 +77,7 @@ function updateUserArea() {
     if (currentUser) {
         userArea.innerHTML = `
             <div class="flex items-center gap-3">
-                <span class="text-sm font-semibold">${currentUser.username}</span>
+                <span class="text-sm font-semibold">${escapeHtml(currentUser.username)}</span>
                 <button onclick="logout()" class="text-sm px-3 py-1 rounded" style="background-color: var(--bg-secondary); color: var(--text-secondary);">
                     退出
                 </button>
@@ -85,12 +102,19 @@ function updateUserArea() {
 }
 
 // 退出登录
-function logout() {
+async function logout() {
     if (confirm('确认退出登录？')) {
+        try {
+            await fetch('/api/logout', { method: 'POST' });
+        } catch (error) {
+            console.error('退出登录请求失败:', error);
+        }
+
         currentUser = null;
         // 清除 localStorage
         localStorage.removeItem('currentUser');
         localStorage.removeItem('userId');
+        localStorage.removeItem('ai_config');
         if (updateInterval) {
             clearInterval(updateInterval);
         }
@@ -154,6 +178,7 @@ async function deleteAccount() {
             // 清除 localStorage
             localStorage.removeItem('currentUser');
             localStorage.removeItem('userId');
+            localStorage.removeItem('ai_config');
             if (updateInterval) {
                 clearInterval(updateInterval);
             }

@@ -1,17 +1,34 @@
-"""
-FastAPI 主应用 - 路由和定时任务
-"""
-from fastapi import FastAPI, Depends, HTTPException, status
+"""FastAPI 主应用 - 路由和定时任务。"""
+
+from fastapi import FastAPI, Depends, HTTPException, Response, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime, timedelta
+import json
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from backend.core.database import get_db, init_db
+from backend.core.security import (
+    clear_session_cookie,
+    get_current_user,
+    hash_password,
+    needs_password_upgrade,
+    require_same_user,
+    set_session_cookie,
+    verify_password,
+)
+from backend.core.trade_utils import (
+    calculate_fee,
+    calculate_holding_seconds,
+    calculate_liquidation_price,
+    calculate_notional_value,
+    calculate_roi_pct,
+    get_risk_level,
+)
 from backend.core.models import (
     User,
     Position,
@@ -26,6 +43,7 @@ from backend.core.models import (
 )
 from backend.engine.engine import trading_engine
 from backend.core.config import settings
+from backend.core.trading_pairs import DEFAULT_SYMBOL, MARKET_OVERVIEW_SYMBOLS
 
 # 配置日志
 logging.basicConfig(
@@ -67,6 +85,9 @@ app.include_router(market_router)
 class UserRegister(BaseModel):
     username: str
     password: str
+    ai_api_key: str = Field(..., min_length=1)
+    ai_base_url: Optional[str] = None
+    ai_model: Optional[str] = "claude-4.5-opus"
 
 
 class UserLogin(BaseModel):
@@ -108,14 +129,58 @@ class PositionResponse(BaseModel):
         from_attributes = True
 
 
+class PositionSummaryResponse(PositionResponse):
+    current_price: float
+    liquidation_price: Optional[float] = None
+    notional_value: float
+    roi_pct: Optional[float] = None
+    price_change_pct: Optional[float] = None
+    estimated_fee_to_close: float = 0.0
+    distance_to_liquidation_pct: Optional[float] = None
+    holding_seconds: Optional[int] = None
+    risk_level: str = "LOW"
+
+
+class PositionDetailResponse(PositionSummaryResponse):
+    break_even_price: Optional[float] = None
+    status_text: str
+    position_explanation: str
+    next_action_tip: str
+
+
+class BulkClosePositionsRequest(BaseModel):
+    symbols: Optional[List[str]] = None
+
+
+class BulkClosePositionsResponse(BaseModel):
+    closed_count: int
+    requested_symbols: List[str]
+    total_pnl: float
+    total_fee_paid: float
+
+
 class TradeResponse(BaseModel):
     id: int
     symbol: str
     side: TradeSide
+    position_side: Optional[TradeSide] = None
     price: float
     quantity: float
     leverage: int
+    margin_used: Optional[float] = None
+    notional_value: Optional[float] = None
     pnl: float
+    fee_paid: float = 0.0
+    balance_before: Optional[float] = None
+    balance_after: Optional[float] = None
+    roi_pct: Optional[float] = None
+    holding_seconds: Optional[int] = None
+    entry_price_snapshot: Optional[float] = None
+    liquidation_price_snapshot: Optional[float] = None
+    close_reason: Optional[str] = None
+    execution_source: Optional[str] = None
+    market_data: Optional[str] = None
+    error_message: Optional[str] = None
     trade_type: TradeType
     created_at: datetime
 
@@ -128,7 +193,7 @@ class PromptCreate(BaseModel):
     description: Optional[str] = None
     prompt_text: str
     ai_model: Optional[str] = "claude-4.5-opus"
-    symbol: Optional[str] = "BTC/USDT"
+    symbol: Optional[str] = DEFAULT_SYMBOL
 
 
 class PromptResponse(BaseModel):
@@ -199,6 +264,211 @@ class MarketOverview(BaseModel):
 
 
 # ==================== 定时任务 ====================
+
+
+def calculate_position_pnl(position: Position, current_price: float) -> float:
+    if position.side == TradeSide.LONG:
+        return round(
+            (current_price - position.entry_price) * position.quantity * position.leverage,
+            8,
+        )
+    return round(
+        (position.entry_price - current_price) * position.quantity * position.leverage,
+        8,
+    )
+
+
+def calculate_price_change_pct(entry_price: float, current_price: float) -> float | None:
+    if not entry_price:
+        return None
+    return round(((current_price - entry_price) / entry_price) * 100, 4)
+
+
+def calculate_distance_to_liquidation_pct(
+    position: Position, current_price: float
+) -> float | None:
+    if not position.liquidation_price or not current_price:
+        return None
+
+    if position.side == TradeSide.LONG:
+        distance = (current_price - position.liquidation_price) / current_price
+    else:
+        distance = (position.liquidation_price - current_price) / current_price
+    return round(distance * 100, 4)
+
+
+def calculate_break_even_price(position: Position, current_price: float) -> float | None:
+    if not position.quantity or not position.leverage:
+        return None
+
+    open_fee = calculate_fee(position.entry_price, position.quantity)
+    close_fee = calculate_fee(current_price, position.quantity)
+    price_delta = (open_fee + close_fee) / (position.quantity * position.leverage)
+
+    if position.side == TradeSide.LONG:
+        return round(position.entry_price + price_delta, 8)
+    return round(max(position.entry_price - price_delta, 0), 8)
+
+
+def get_position_status_text(unrealized_pnl: float) -> str:
+    if unrealized_pnl > 0.01:
+        return "浮盈中"
+    if unrealized_pnl < -0.01:
+        return "浮亏中"
+    return "接近保本"
+
+
+def get_position_explanation(side: TradeSide) -> str:
+    if side == TradeSide.LONG:
+        return "做多表示你判断价格会上涨，当前价高于开仓价时通常更容易出现浮盈。"
+    return "做空表示你判断价格会下跌，当前价低于开仓价时通常更容易出现浮盈。"
+
+
+def get_position_next_action_tip(
+    status_text: str, risk_level: str, distance_to_liquidation_pct: float | None
+) -> str:
+    if risk_level == "HIGH" or (
+        distance_to_liquidation_pct is not None and distance_to_liquidation_pct <= 3
+    ):
+        return "当前仓位离爆仓价较近，优先考虑减仓、止损或降低杠杆。"
+    if status_text == "浮盈中":
+        return "当前处于浮盈阶段，可以结合计划考虑分批止盈或继续观察趋势。"
+    if status_text == "浮亏中":
+        return "当前处于浮亏阶段，建议先确认是否触发了你的止损规则。"
+    return "当前接近盈亏平衡，适合重新检查趋势、成本和风险承受能力。"
+
+
+def get_position_risk_level(
+    leverage: int, distance_to_liquidation_pct: float | None
+) -> str:
+    base_level = get_risk_level(leverage)
+    if distance_to_liquidation_pct is None:
+        return base_level
+    if distance_to_liquidation_pct <= 3:
+        return "HIGH"
+    if distance_to_liquidation_pct <= 8 and base_level == "LOW":
+        return "MEDIUM"
+    return base_level
+
+
+def build_position_summary(
+    position: Position, current_price: float | None = None
+) -> PositionSummaryResponse:
+    latest_price = current_price
+    if latest_price is None:
+        latest_price = trading_engine.fetch_current_price(position.symbol)
+    if latest_price is None:
+        latest_price = position.entry_price
+
+    unrealized_pnl = (
+        calculate_position_pnl(position, latest_price)
+        if position.is_open
+        else position.unrealized_pnl
+    )
+
+    notional_value = calculate_notional_value(latest_price, position.quantity)
+    roi_pct = calculate_roi_pct(unrealized_pnl, position.margin)
+    price_change_pct = calculate_price_change_pct(position.entry_price, latest_price)
+    estimated_fee_to_close = calculate_fee(latest_price, position.quantity)
+    holding_seconds = calculate_holding_seconds(position.created_at, get_local_time())
+    distance_to_liquidation_pct = calculate_distance_to_liquidation_pct(
+        position, latest_price
+    )
+    risk_level = get_position_risk_level(
+        position.leverage, distance_to_liquidation_pct
+    )
+
+    return PositionSummaryResponse(
+        id=position.id,
+        symbol=position.symbol,
+        side=position.side,
+        entry_price=position.entry_price,
+        current_price=latest_price,
+        quantity=position.quantity,
+        leverage=position.leverage,
+        margin=position.margin,
+        unrealized_pnl=unrealized_pnl,
+        liquidation_price=position.liquidation_price,
+        notional_value=notional_value,
+        roi_pct=roi_pct,
+        price_change_pct=price_change_pct,
+        estimated_fee_to_close=estimated_fee_to_close,
+        distance_to_liquidation_pct=distance_to_liquidation_pct,
+        holding_seconds=holding_seconds,
+        risk_level=risk_level,
+        is_open=position.is_open,
+        created_at=position.created_at,
+    )
+
+
+def serialize_trade_response(trade: Trade) -> TradeResponse:
+    error_message = None
+    if trade.market_data:
+        try:
+            market_data = json.loads(trade.market_data)
+            if isinstance(market_data, dict):
+                error_message = market_data.get("error") or market_data.get("exception")
+        except json.JSONDecodeError:
+            error_message = None
+
+    return TradeResponse(
+        id=trade.id,
+        symbol=trade.symbol,
+        side=trade.side,
+        position_side=trade.position_side,
+        price=trade.price,
+        quantity=trade.quantity,
+        leverage=trade.leverage,
+        margin_used=trade.margin_used,
+        notional_value=trade.notional_value,
+        pnl=trade.pnl,
+        fee_paid=trade.fee_paid,
+        balance_before=trade.balance_before,
+        balance_after=trade.balance_after,
+        roi_pct=trade.roi_pct,
+        holding_seconds=trade.holding_seconds,
+        entry_price_snapshot=trade.entry_price_snapshot,
+        liquidation_price_snapshot=trade.liquidation_price_snapshot,
+        close_reason=trade.close_reason,
+        execution_source=trade.execution_source,
+        market_data=trade.market_data,
+        error_message=error_message,
+        trade_type=trade.trade_type,
+        created_at=trade.created_at,
+    )
+    notional_value = calculate_notional_value(latest_price, position.quantity)
+    roi_pct = calculate_roi_pct(unrealized_pnl, position.margin)
+    price_change_pct = calculate_price_change_pct(position.entry_price, latest_price)
+    estimated_fee_to_close = calculate_fee(latest_price, position.quantity)
+    holding_seconds = calculate_holding_seconds(position.created_at, get_local_time())
+    distance_to_liquidation_pct = calculate_distance_to_liquidation_pct(
+        position, latest_price
+    )
+    risk_level = get_position_risk_level(
+        position.leverage, distance_to_liquidation_pct
+    )
+
+    return PositionSummaryResponse(
+        id=position.id,
+        symbol=position.symbol,
+        side=position.side,
+        entry_price=position.entry_price,
+        current_price=latest_price,
+        quantity=position.quantity,
+        leverage=position.leverage,
+        margin=position.margin,
+        unrealized_pnl=unrealized_pnl,
+        liquidation_price=position.liquidation_price,
+        notional_value=notional_value,
+        roi_pct=roi_pct,
+        price_change_pct=price_change_pct,
+        estimated_fee_to_close=estimated_fee_to_close,
+        distance_to_liquidation_pct=distance_to_liquidation_pct,
+        holding_seconds=holding_seconds,
+        risk_level=risk_level,
+        is_open=position.is_open,
+        created_at=position.created_at,
+    )
 
 
 def scheduled_price_update():
@@ -323,6 +593,10 @@ def startup_event():
     init_db()
     logger.info("数据库初始化完成")
 
+    if settings.DISABLE_SCHEDULER:
+        logger.info("已禁用定时任务调度器")
+        return
+
     # 启动定时任务
     scheduler = BackgroundScheduler()
 
@@ -371,7 +645,11 @@ def read_root():
 
 
 @app.post("/api/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register_user(user_data: UserRegister, db: Session = Depends(get_db)):
+def register_user(
+    user_data: UserRegister,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     """注册用户"""
     # 检查用户名是否已存在
     existing_user = db.query(User).filter(User.username == user_data.username).first()
@@ -381,44 +659,72 @@ def register_user(user_data: UserRegister, db: Session = Depends(get_db)):
     # 创建新用户（实际应使用密码哈希）
     new_user = User(
         username=user_data.username,
-        password=user_data.password,  # 简单存储，生产环境应使用 bcrypt 等加密
+        password=hash_password(user_data.password),
         balance=settings.INITIAL_BALANCE,
         initial_balance=settings.INITIAL_BALANCE,
+        ai_api_key=user_data.ai_api_key,
+        ai_base_url=user_data.ai_base_url or "",
+        ai_model=user_data.ai_model or "claude-4.5-opus",
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
 
     logger.debug(f"新用户注册: {new_user.username}")
+    set_session_cookie(response, new_user.id)
     return new_user
 
 
 @app.post("/api/login", response_model=UserResponse)
-def login_user(user_data: UserLogin, db: Session = Depends(get_db)):
+def login_user(
+    user_data: UserLogin,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     """用户登录"""
     user = db.query(User).filter(User.username == user_data.username).first()
     if not user:
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
-    # 验证密码（简单比较，生产环境应使用密码哈希验证）
-    if user.password != user_data.password:
+    if not verify_password(user_data.password, user.password):
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
+    if needs_password_upgrade(user.password):
+        user.password = hash_password(user_data.password)
+        db.commit()
+        db.refresh(user)
+
     logger.debug(f"用户登录: {user.username}")
+    set_session_cookie(response, user.id)
     return user
+
+
+@app.post("/api/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout_user(response: Response):
+    """退出登录并清理会话 Cookie。"""
+    clear_session_cookie(response)
+    return None
 
 
 @app.get("/api/users/{user_id}", response_model=UserResponse)
-def get_user(user_id: int, db: Session = Depends(get_db)):
+def get_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_same_user),
+):
     """获取用户信息"""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
+    if not current_user:
         raise HTTPException(status_code=404, detail="用户不存在")
-    return user
+    return current_user
 
 
 @app.delete("/api/users/{user_id}", status_code=status.HTTP_200_OK)
-def delete_user(user_id: int, db: Session = Depends(get_db)):
+def delete_user(
+    user_id: int,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_same_user),
+):
     """
     注销用户账号
 
@@ -429,17 +735,14 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
     - AI决策日志
     - AI对话记录
     """
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="用户不存在")
-
-    username = user.username
+    username = current_user.username
 
     # 由于在 models.py 中已设置 cascade="all, delete-orphan"
     # 以及 ForeignKey 的 ondelete="CASCADE"
     # 直接删除用户会自动级联删除所有关联数据
-    db.delete(user)
+    db.delete(current_user)
     db.commit()
+    clear_session_cookie(response)
 
     logger.info(f"用户已注销: {username} (ID: {user_id})")
 
@@ -454,19 +757,53 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
 # ---------- 持仓管理 ----------
 
 
-@app.get("/api/users/{user_id}/positions", response_model=List[PositionResponse])
-def get_user_positions(user_id: int, db: Session = Depends(get_db)):
+@app.get("/api/users/{user_id}/positions", response_model=List[PositionSummaryResponse])
+def get_user_positions(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_same_user),
+):
     """获取用户持仓"""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="用户不存在")
-
     positions = (
         db.query(Position)
         .filter(Position.user_id == user_id, Position.is_open == True)
         .all()
     )
-    return positions
+    price_cache: dict[str, float] = {}
+    summaries = []
+    for position in positions:
+        if position.symbol not in price_cache:
+            latest_price = trading_engine.fetch_current_price(position.symbol)
+            price_cache[position.symbol] = latest_price or position.entry_price
+        summaries.append(build_position_summary(position, price_cache[position.symbol]))
+    return summaries
+
+
+@app.get("/api/positions/{position_id}", response_model=PositionDetailResponse)
+def get_position_detail(
+    position_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """获取单个持仓详情"""
+    position = db.query(Position).filter(Position.id == position_id).first()
+    if not position:
+        raise HTTPException(status_code=404, detail="持仓不存在")
+    if position.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权查看该持仓")
+
+    summary = build_position_summary(position)
+    status_text = get_position_status_text(summary.unrealized_pnl)
+
+    return PositionDetailResponse(
+        **summary.model_dump(),
+        break_even_price=calculate_break_even_price(position, summary.current_price),
+        status_text=status_text,
+        position_explanation=get_position_explanation(position.side),
+        next_action_tip=get_position_next_action_tip(
+            status_text, summary.risk_level, summary.distance_to_liquidation_pct
+        ),
+    )
 
 
 @app.post(
@@ -475,12 +812,13 @@ def get_user_positions(user_id: int, db: Session = Depends(get_db)):
     status_code=status.HTTP_201_CREATED,
 )
 def open_position(
-    user_id: int, position_data: PositionCreate, db: Session = Depends(get_db)
+    user_id: int,
+    position_data: PositionCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_same_user),
 ):
     """开仓"""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="用户不存在")
+    user = current_user
 
     # 获取当前价格
     current_price = trading_engine.fetch_current_price(position_data.symbol)
@@ -488,15 +826,22 @@ def open_position(
         raise HTTPException(status_code=500, detail="无法获取市场价格")
 
     # 计算保证金 (保证金 = 仓位价值 / 杠杆)
-    margin = (current_price * position_data.quantity) / position_data.leverage
+    notional_value = calculate_notional_value(current_price, position_data.quantity)
+    fee_paid = calculate_fee(current_price, position_data.quantity)
+    margin = notional_value / position_data.leverage
+    total_cost = margin + fee_paid
 
     # 检查余额是否足够
-    if user.balance < margin:
+    if user.balance < total_cost:
         raise HTTPException(status_code=400, detail="余额不足")
 
     # 扣除保证金
-    user.balance -= margin
+    balance_before = user.balance
+    user.balance -= total_cost
     user.updated_at = get_local_time()
+    liquidation_price = calculate_liquidation_price(
+        current_price, position_data.leverage, position_data.side
+    )
 
     # 创建持仓
     new_position = Position(
@@ -507,18 +852,39 @@ def open_position(
         quantity=position_data.quantity,
         leverage=position_data.leverage,
         margin=margin,
+        liquidation_price=liquidation_price,
     )
     db.add(new_position)
+    db.flush()
 
     # 记录交易历史
     trade = Trade(
         user_id=user_id,
+        position_id=new_position.id,
         symbol=position_data.symbol,
         side=TradeSide.BUY if position_data.side == TradeSide.LONG else TradeSide.SELL,
+        position_side=position_data.side,
         price=current_price,
         quantity=position_data.quantity,
         leverage=position_data.leverage,
+        margin_used=margin,
+        notional_value=notional_value,
+        fee_paid=fee_paid,
+        balance_before=balance_before,
+        balance_after=user.balance,
+        roi_pct=calculate_roi_pct(0.0, margin),
+        entry_price_snapshot=current_price,
+        liquidation_price_snapshot=liquidation_price,
+        close_reason="USER_OPEN",
+        execution_source="MANUAL",
         trade_type=TradeType.OPEN,
+        market_data=(
+            '{'
+            f'"risk_level":"{get_risk_level(position_data.leverage)}",'
+            f'"fee_rate":{settings.TRADING_FEE_RATE},'
+            f'"estimated_total_cost":{round(total_cost, 8)}'
+            '}'
+        ),
     )
     db.add(trade)
 
@@ -532,51 +898,153 @@ def open_position(
     return new_position
 
 
-@app.delete("/api/positions/{position_id}", status_code=status.HTTP_204_NO_CONTENT)
-def close_position(position_id: int, db: Session = Depends(get_db)):
-    """平仓"""
-    position = db.query(Position).filter(Position.id == position_id).first()
-    if not position:
-        raise HTTPException(status_code=404, detail="持仓不存在")
-
-    if not position.is_open:
-        raise HTTPException(status_code=400, detail="持仓已关闭")
-
-    # 获取用户
-    user = db.query(User).filter(User.id == position.user_id).first()
-
-    # 获取当前价格
-    current_price = trading_engine.fetch_current_price(position.symbol)
-    if current_price is None:
-        raise HTTPException(status_code=500, detail="无法获取市场价格")
-
-    # 计算盈亏
+def close_position_record(
+    db: Session,
+    user: User,
+    position: Position,
+    current_price: float,
+    close_reason: str = "USER_CLOSE",
+    execution_source: str = "MANUAL",
+) -> tuple[float, float]:
+    """执行单个持仓平仓并记录交易历史。"""
     if position.side == TradeSide.LONG:
         pnl = (current_price - position.entry_price) * position.quantity * position.leverage
     else:
         pnl = (position.entry_price - current_price) * position.quantity * position.leverage
 
-    # 退还保证金 + 盈亏
-    user.balance += position.margin + pnl
-    user.updated_at = get_local_time()
+    notional_value = calculate_notional_value(current_price, position.quantity)
+    fee_paid = calculate_fee(current_price, position.quantity)
+    balance_before = user.balance
+    closed_at = get_local_time()
 
-    # 更新持仓状态
+    user.balance += position.margin + pnl - fee_paid
+    user.updated_at = closed_at
+
     position.is_open = False
-    position.closed_at = get_local_time()
+    position.closed_at = closed_at
     position.unrealized_pnl = pnl
 
-    # 记录交易历史
     trade = Trade(
         user_id=user.id,
+        position_id=position.id,
         symbol=position.symbol,
         side=TradeSide.SELL if position.side == TradeSide.LONG else TradeSide.BUY,
+        position_side=position.side,
         price=current_price,
         quantity=position.quantity,
         leverage=position.leverage,
+        margin_used=position.margin,
+        notional_value=notional_value,
         pnl=pnl,
+        fee_paid=fee_paid,
+        balance_before=balance_before,
+        balance_after=user.balance,
+        roi_pct=calculate_roi_pct(pnl, position.margin),
+        holding_seconds=calculate_holding_seconds(position.created_at, closed_at),
+        entry_price_snapshot=position.entry_price,
+        liquidation_price_snapshot=position.liquidation_price,
+        close_reason=close_reason,
+        execution_source=execution_source,
         trade_type=TradeType.CLOSE,
+        market_data=(
+            '{'
+            f'"exit_price":{round(current_price, 8)},'
+            f'"fee_rate":{settings.TRADING_FEE_RATE},'
+            f'"close_reason":"{close_reason}"'
+            '}'
+        ),
     )
     db.add(trade)
+    return pnl, fee_paid
+
+
+@app.post(
+    "/api/users/{user_id}/positions/close-all",
+    response_model=BulkClosePositionsResponse,
+)
+def close_positions_by_symbols(
+    user_id: int,
+    request: BulkClosePositionsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_same_user),
+):
+    """批量平仓，支持按交易对筛选。"""
+    positions_query = db.query(Position).filter(
+        Position.user_id == current_user.id,
+        Position.is_open == True,
+    )
+
+    requested_symbols = [symbol for symbol in (request.symbols or []) if symbol]
+    if requested_symbols:
+        positions_query = positions_query.filter(Position.symbol.in_(requested_symbols))
+
+    positions = positions_query.all()
+    if not positions:
+        return BulkClosePositionsResponse(
+            closed_count=0,
+            requested_symbols=requested_symbols,
+            total_pnl=0.0,
+            total_fee_paid=0.0,
+        )
+
+    price_cache: dict[str, float] = {}
+    total_pnl = 0.0
+    total_fee_paid = 0.0
+
+    for position in positions:
+        if position.symbol not in price_cache:
+            latest_price = trading_engine.fetch_current_price(position.symbol)
+            if latest_price is None:
+                raise HTTPException(status_code=500, detail=f"无法获取 {position.symbol} 市场价格")
+            price_cache[position.symbol] = latest_price
+
+        pnl, fee_paid = close_position_record(
+            db,
+            current_user,
+            position,
+            price_cache[position.symbol],
+            close_reason="SYMBOL_SWITCH_CLOSE",
+            execution_source="MANUAL_BULK_CLOSE",
+        )
+        total_pnl += pnl
+        total_fee_paid += fee_paid
+
+    db.commit()
+
+    logger.info(
+        f"用户 {current_user.username} 批量平仓 {len(positions)} 笔持仓，symbols={requested_symbols or 'ALL'}"
+    )
+
+    return BulkClosePositionsResponse(
+        closed_count=len(positions),
+        requested_symbols=requested_symbols,
+        total_pnl=round(total_pnl, 8),
+        total_fee_paid=round(total_fee_paid, 8),
+    )
+
+
+@app.delete("/api/positions/{position_id}", status_code=status.HTTP_204_NO_CONTENT)
+def close_position(
+    position_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """平仓"""
+    position = db.query(Position).filter(Position.id == position_id).first()
+    if not position:
+        raise HTTPException(status_code=404, detail="持仓不存在")
+
+    if position.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权操作该持仓")
+
+    if not position.is_open:
+        raise HTTPException(status_code=400, detail="持仓已关闭")
+
+    user = current_user
+    current_price = trading_engine.fetch_current_price(position.symbol)
+    if current_price is None:
+        raise HTTPException(status_code=500, detail="无法获取市场价格")
+    pnl, _fee_paid = close_position_record(db, user, position, current_price)
 
     db.commit()
 
@@ -596,12 +1064,9 @@ def get_user_trades(
     page: int = 1,
     page_size: int = 10,
     db: Session = Depends(get_db),
+    _current_user: User = Depends(require_same_user),
 ):
     """获取用户交易历史（分页）"""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="用户不存在")
-
     if page < 1:
         page = 1
     if page_size < 1 or page_size > 100:
@@ -620,7 +1085,7 @@ def get_user_trades(
     )
 
     return {
-        "trades": [TradeResponse.model_validate(t) for t in trades],
+        "trades": [serialize_trade_response(t) for t in trades],
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -629,12 +1094,18 @@ def get_user_trades(
 
 
 @app.get("/api/trades/{trade_id}", response_model=TradeResponse)
-def get_trade_detail(trade_id: int, db: Session = Depends(get_db)):
+def get_trade_detail(
+    trade_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """获取单个交易详情"""
     trade = db.query(Trade).filter(Trade.id == trade_id).first()
     if not trade:
         raise HTTPException(status_code=404, detail="交易不存在")
-    return trade
+    if trade.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权查看该交易")
+    return serialize_trade_response(trade)
 
 
 # ---------- 行情数据 ----------
@@ -643,7 +1114,7 @@ def get_trade_detail(trade_id: int, db: Session = Depends(get_db)):
 @app.get("/api/market/overview", response_model=List[MarketOverview])
 def get_market_overview():
     """获取首页市场概览（多个币种）"""
-    symbols = ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "XRP/USDT"]
+    symbols = MARKET_OVERVIEW_SYMBOLS
     prices = trading_engine.fetch_multiple_prices(symbols)
 
     overview = []
@@ -742,14 +1213,22 @@ def get_leaderboard(db: Session = Depends(get_db)):
 @app.post(
     "/api/prompts", response_model=PromptResponse, status_code=status.HTTP_201_CREATED
 )
-def create_prompt(prompt_data: PromptCreate, db: Session = Depends(get_db)):
+def create_prompt(
+    prompt_data: PromptCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """创建提示词配置"""
     # 检查名称是否已存在
-    existing = db.query(PromptConfig).filter(PromptConfig.name == prompt_data.name).first()
+    existing = db.query(PromptConfig).filter(
+        PromptConfig.user_id == current_user.id,
+        PromptConfig.name == prompt_data.name,
+    ).first()
     if existing:
         raise HTTPException(status_code=400, detail="提示词名称已存在")
 
     new_prompt = PromptConfig(
+        user_id=current_user.id,
         name=prompt_data.name,
         description=prompt_data.description,
         prompt_text=prompt_data.prompt_text,
@@ -765,21 +1244,35 @@ def create_prompt(prompt_data: PromptCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/api/prompts", response_model=List[PromptResponse])
-def get_prompts(db: Session = Depends(get_db)):
+def get_prompts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """获取所有提示词"""
-    prompts = db.query(PromptConfig).all()
+    prompts = db.query(PromptConfig).filter(
+        PromptConfig.user_id == current_user.id
+    ).all()
     return prompts
 
 
 @app.put("/api/prompts/{prompt_id}/activate", response_model=PromptResponse)
-def activate_prompt(prompt_id: int, db: Session = Depends(get_db)):
+def activate_prompt(
+    prompt_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """激活指定提示词（同时停用其他）"""
-    prompt = db.query(PromptConfig).filter(PromptConfig.id == prompt_id).first()
+    prompt = db.query(PromptConfig).filter(
+        PromptConfig.id == prompt_id,
+        PromptConfig.user_id == current_user.id,
+    ).first()
     if not prompt:
         raise HTTPException(status_code=404, detail="提示词不存在")
 
     # 停用所有提示词
-    db.query(PromptConfig).update({"is_active": False})
+    db.query(PromptConfig).filter(
+        PromptConfig.user_id == current_user.id
+    ).update({"is_active": False})
 
     # 激活指定提示词
     prompt.is_active = True
@@ -793,18 +1286,33 @@ def activate_prompt(prompt_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/prompts/{prompt_id}", response_model=PromptResponse)
-def get_prompt(prompt_id: int, db: Session = Depends(get_db)):
+def get_prompt(
+    prompt_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """获取单个提示词详情"""
-    prompt = db.query(PromptConfig).filter(PromptConfig.id == prompt_id).first()
+    prompt = db.query(PromptConfig).filter(
+        PromptConfig.id == prompt_id,
+        PromptConfig.user_id == current_user.id,
+    ).first()
     if not prompt:
         raise HTTPException(status_code=404, detail="提示词不存在")
     return prompt
 
 
 @app.put("/api/prompts/{prompt_id}", response_model=PromptResponse)
-def update_prompt(prompt_id: int, prompt_data: PromptCreate, db: Session = Depends(get_db)):
+def update_prompt(
+    prompt_id: int,
+    prompt_data: PromptCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """更新提示词配置"""
-    prompt = db.query(PromptConfig).filter(PromptConfig.id == prompt_id).first()
+    prompt = db.query(PromptConfig).filter(
+        PromptConfig.id == prompt_id,
+        PromptConfig.user_id == current_user.id,
+    ).first()
     if not prompt:
         raise HTTPException(status_code=404, detail="提示词不存在")
 
@@ -832,11 +1340,18 @@ async def get_available_models():
 
 
 @app.post("/api/prompts/{prompt_id}/reset")
-def reset_prompt_to_default(prompt_id: int, db: Session = Depends(get_db)):
+def reset_prompt_to_default(
+    prompt_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """重置提示词为默认预设"""
     from backend.utils.init_prompts import DEFAULT_PROMPTS
 
-    prompt = db.query(PromptConfig).filter(PromptConfig.id == prompt_id).first()
+    prompt = db.query(PromptConfig).filter(
+        PromptConfig.id == prompt_id,
+        PromptConfig.user_id == current_user.id,
+    ).first()
     if not prompt:
         raise HTTPException(status_code=404, detail="提示词不存在")
 
@@ -885,12 +1400,13 @@ def get_stats(db: Session = Depends(get_db)):
 
 
 @app.get("/api/users/{user_id}/ai-decisions", response_model=List[AIDecisionLogResponse])
-def get_ai_decisions(user_id: int, limit: int = 50, db: Session = Depends(get_db)):
+def get_ai_decisions(
+    user_id: int,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_same_user),
+):
     """获取用户的 AI 决策日志"""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="用户不存在")
-
     decisions = (
         db.query(AIDecisionLog)
         .filter(AIDecisionLog.user_id == user_id)
@@ -905,12 +1421,13 @@ def get_ai_decisions(user_id: int, limit: int = 50, db: Session = Depends(get_db
 
 
 @app.get("/api/users/{user_id}/conversations", response_model=List[AIConversationResponse])
-def get_conversations(user_id: int, limit: int = 100, db: Session = Depends(get_db)):
+def get_conversations(
+    user_id: int,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_same_user),
+):
     """获取用户的 AI 对话历史"""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="用户不存在")
-
     conversations = (
         db.query(AIConversation)
         .filter(AIConversation.user_id == user_id)
@@ -927,12 +1444,13 @@ def get_conversations(user_id: int, limit: int = 100, db: Session = Depends(get_
     status_code=status.HTTP_201_CREATED,
 )
 async def create_conversation(
-    user_id: int, conversation: ConversationCreate, db: Session = Depends(get_db)
+    user_id: int,
+    conversation: ConversationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_same_user),
 ):
     """创建用户对话（用户发送消息，Claude AI 回复）"""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="用户不存在")
+    user = current_user
 
     # 保存用户消息
     user_message = AIConversation(

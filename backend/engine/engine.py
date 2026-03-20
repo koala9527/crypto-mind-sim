@@ -19,6 +19,11 @@ from backend.core.models import (
     get_local_time,
 )
 from backend.core.config import settings
+from backend.core.trade_utils import (
+    calculate_holding_seconds,
+    calculate_notional_value,
+    calculate_roi_pct,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -443,12 +448,25 @@ class TradingEngine:
             # 记录交易历史
             trade = Trade(
                 user_id=user.id,
+                position_id=position.id,
                 symbol=position.symbol,
                 side=TradeSide.SELL if position.side == TradeSide.LONG else TradeSide.BUY,
+                position_side=position.side,
                 price=0,  # 爆仓时价格不记录
                 quantity=position.quantity,
                 leverage=position.leverage,
+                margin_used=position.margin,
+                notional_value=calculate_notional_value(position.entry_price, position.quantity),
                 pnl=pnl,
+                fee_paid=0.0,
+                balance_before=user.balance,
+                balance_after=user.balance,
+                roi_pct=calculate_roi_pct(pnl, position.margin),
+                holding_seconds=calculate_holding_seconds(position.created_at, position.closed_at),
+                entry_price_snapshot=position.entry_price,
+                liquidation_price_snapshot=position.liquidation_price,
+                close_reason="LIQUIDATION",
+                execution_source="SYSTEM",
                 trade_type=TradeType.LIQUIDATION,
             )
             db.add(trade)

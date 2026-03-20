@@ -4,6 +4,135 @@ let availableModels = [];
 let availableSymbols = [];
 let presetStrategies = [];
 let currentEditingPrompt = null;
+let strategySymbolAnchor = null;
+let strategyPositionConflictState = null;
+
+function getDefaultStrategySymbol() {
+    return availableSymbols[0]?.symbol || 'BTC/USDT';
+}
+
+function setStrategySymbolAnchor(symbol) {
+    strategySymbolAnchor = symbol || getDefaultStrategySymbol();
+}
+
+function hideStrategyPositionConflict() {
+    strategyPositionConflictState = null;
+    const notice = document.getElementById('strategyPositionConflictNotice');
+    const text = document.getElementById('strategyPositionConflictText');
+    if (notice) notice.classList.add('hidden');
+    if (text) text.textContent = '';
+}
+
+function dismissStrategyPositionConflict() {
+    hideStrategyPositionConflict();
+}
+
+function summarizeConflictPositions(positions) {
+    const grouped = new Map();
+    positions.forEach((position) => {
+        grouped.set(position.symbol, (grouped.get(position.symbol) || 0) + 1);
+    });
+
+    return Array.from(grouped.entries())
+        .map(([symbol, count]) => `${symbol} × ${count}`)
+        .join('、');
+}
+
+async function onStrategySymbolChange() {
+    const symbolSelect = document.getElementById('strategySymbol');
+    const userId = localStorage.getItem('userId');
+    if (!symbolSelect || !userId) {
+        hideStrategyPositionConflict();
+        return;
+    }
+
+    const nextSymbol = symbolSelect.value;
+    if (!nextSymbol) {
+        hideStrategyPositionConflict();
+        return;
+    }
+
+    if (!strategySymbolAnchor) {
+        setStrategySymbolAnchor(nextSymbol);
+        hideStrategyPositionConflict();
+        return;
+    }
+
+    if (nextSymbol === strategySymbolAnchor) {
+        hideStrategyPositionConflict();
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/users/${userId}/positions`);
+        if (!response.ok) {
+            hideStrategyPositionConflict();
+            return;
+        }
+
+        const positions = await response.json();
+        const conflictPositions = (Array.isArray(positions) ? positions : []).filter(
+            (position) => position.symbol !== nextSymbol
+        );
+
+        if (conflictPositions.length === 0) {
+            hideStrategyPositionConflict();
+            return;
+        }
+
+        strategyPositionConflictState = {
+            nextSymbol,
+            symbols: [...new Set(conflictPositions.map((position) => position.symbol))],
+            count: conflictPositions.length,
+        };
+
+        const notice = document.getElementById('strategyPositionConflictNotice');
+        const text = document.getElementById('strategyPositionConflictText');
+        if (notice && text) {
+            text.textContent = `当前准备切换到 ${nextSymbol}，但你还有 ${conflictPositions.length} 笔未平仓持仓：${summarizeConflictPositions(conflictPositions)}。建议先一键平仓，再使用新交易对运行策略。`;
+            notice.classList.remove('hidden');
+        }
+
+        showToast('检测到当前持仓，可在下方一键平仓', 'warning');
+    } catch (error) {
+        console.error('检测持仓冲突失败:', error);
+        hideStrategyPositionConflict();
+    }
+}
+
+async function closeConflictingPositionsBeforeSwitch() {
+    const userId = localStorage.getItem('userId');
+    if (!userId || !strategyPositionConflictState?.symbols?.length) {
+        hideStrategyPositionConflict();
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/users/${userId}/positions/close-all`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbols: strategyPositionConflictState.symbols })
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+            showToast(result.detail || '一键平仓失败', 'error');
+            return;
+        }
+
+        hideStrategyPositionConflict();
+        showToast(`已一键平仓 ${Number(result.closed_count || 0)} 笔持仓`, 'success');
+
+        if (typeof updateData === 'function') {
+            await updateData();
+        }
+
+        await onStrategySymbolChange();
+    } catch (error) {
+        console.error('一键平仓失败:', error);
+        showToast('一键平仓失败', 'error');
+    }
+}
 
 // 加载可用交易对列表
 async function loadAvailableSymbols() {
@@ -31,8 +160,7 @@ function populateSymbolSelect() {
         symbolSelect.appendChild(option);
     });
 
-    // 默认选中 BTC/USDT
-    symbolSelect.value = 'BTC/USDT';
+    symbolSelect.value = getDefaultStrategySymbol();
 }
 
 // 加载可用模型列表
@@ -118,8 +246,10 @@ function fillStrategyForm(strategy) {
     document.getElementById('strategyName').value = strategy.name || '';
     document.getElementById('strategyDescription').value = strategy.description || '';
     document.getElementById('strategyPrompt').value = strategy.prompt_text || '';
-    document.getElementById('strategySymbol').value = strategy.symbol || 'BTC/USDT';
+    document.getElementById('strategySymbol').value = strategy.symbol || getDefaultStrategySymbol();
     document.getElementById('strategyInterval').value = strategy.execution_interval || 1;
+    setStrategySymbolAnchor(strategy.symbol || getDefaultStrategySymbol());
+    hideStrategyPositionConflict();
 
     // 显示保存按钮
     document.getElementById('saveStrategyBtn').classList.remove('hidden');
@@ -136,10 +266,12 @@ function fillStrategyForm(strategy) {
 function clearStrategyForm() {
     document.getElementById('strategyName').value = '';
     document.getElementById('strategyDescription').value = '';
-    document.getElementById('strategySymbol').value = 'BTC/USDT';
+    document.getElementById('strategySymbol').value = getDefaultStrategySymbol();
     document.getElementById('strategyPrompt').value = '';
     document.getElementById('strategyInterval').value = '1';
     currentEditingPrompt = null;
+    setStrategySymbolAnchor(getDefaultStrategySymbol());
+    hideStrategyPositionConflict();
 
     document.getElementById('resetStrategyBtn').classList.add('hidden');
     document.getElementById('saveStrategyBtn').classList.remove('hidden');
@@ -203,6 +335,8 @@ async function saveStrategy() {
         if (response.ok) {
             const savedStrategy = await response.json();
             currentEditingPrompt = savedStrategy; // 保存返回的策略对象
+            setStrategySymbolAnchor(savedStrategy.symbol);
+            hideStrategyPositionConflict();
             showToast(t('strategySaved'), 'success');
             hideCreateStrategyModal();
             if (typeof updatePrompts === 'function') {

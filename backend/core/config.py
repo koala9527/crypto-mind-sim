@@ -1,24 +1,29 @@
-"""
-配置管理模块 - 使用 Pydantic Settings
-"""
-from pydantic_settings import BaseSettings
-from typing import Optional
+﻿"""配置管理模块。"""
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """应用配置"""
 
-    # 数据库配置
-    DATABASE_URL: str = "postgresql://neotrade:neotrade_pass@localhost:5432/neotrade"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        extra="ignore",
+    )
 
-    # 服务器配置
-    HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    # 数据库配置
+    DATABASE_URL: str = "sqlite:///./neotrade.db"
+
+    # 服务配置
+    HOST: str = "127.0.0.1"
+    PORT: int = 8010
 
     # 交易配置
     INITIAL_BALANCE: float = 10000.0
-    LIQUIDATION_THRESHOLD: float = 0.9  # 爆仓阈值 90%
-    PRICE_UPDATE_INTERVAL: int = 60  # 价格更新间隔（秒）
+    LIQUIDATION_THRESHOLD: float = 0.9
+    PRICE_UPDATE_INTERVAL: int = 60
+    TRADING_FEE_RATE: float = 0.0004
 
     # 交易所配置
     EXCHANGE: str = "binance"
@@ -27,16 +32,14 @@ class Settings(BaseSettings):
     # 排行榜配置
     LEADERBOARD_TOP_N: int = 10
 
-    # AI 配置 (只需要两个参数)
-    AI_API_KEY: str = ""
-    AI_BASE_URL: str = ""
+    # 会话配置
+    SECRET_KEY: str = "change-this-before-production"
+    SESSION_COOKIE_NAME: str = "neotrade_session"
+    SESSION_MAX_AGE: int = 60 * 60 * 24 * 7
+    DISABLE_SCHEDULER: bool = False
 
     # 时区配置
     TIMEZONE: str = "Asia/Shanghai"
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
 
 
 settings = Settings()

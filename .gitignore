@@ -53,6 +53,9 @@ Thumbs.db
 nul
 *.tmp
 *.temp
+*.backup
+*.bak
+*.old
 
 # Docker
 data/

@@ -151,7 +151,8 @@ class AIService:
         user_positions: List[Dict],
         api_key: str,
         base_url: str = "",
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        symbol: str = "BTC/USDT"
     ) -> Dict:
         """
         市场分析
@@ -188,7 +189,7 @@ class AIService:
             },
             {
                 "role": "user",
-                "content": f"""当前 BTC/USDT 价格: ${current_price:,.2f}
+                "content": f"""当前 {symbol} 价格: ${current_price:,.2f}
 
 最近价格走势（最近10个数据点）:
 {self._format_price_history(price_history[-10:])}

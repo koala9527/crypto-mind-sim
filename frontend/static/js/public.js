@@ -1,4 +1,4 @@
-// ==================== 公开内容加载 ====================
+﻿// ==================== 公开内容加载 ====================
 
 // 加载公开排行榜（未登录时使用）
 async function loadPublicLeaderboard() {
@@ -23,7 +23,7 @@ async function loadPublicLeaderboard() {
                             <div class="flex items-center gap-3">
                                 <div class="text-xl w-8">${medal}</div>
                                 <div>
-                                    <div class="font-semibold">${user.username}</div>
+                                    <div class="font-semibold">${escapeHtml(user.username)}</div>
                                     <div class="text-xs" style="color: var(--text-secondary)">总资产: ${user.total_assets.toFixed(2)} USDT</div>
                                 </div>
                             </div>

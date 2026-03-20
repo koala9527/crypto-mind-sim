@@ -1,117 +1,77 @@
-# AI 功能指南
+﻿# AI 功能指南
 
 ## 概述
 
-NeoTrade AI 通过 HodlAI 中转服务（OpenAI 兼容接口）接入多种大语言模型，实现智能交易分析和自动化策略执行。
+CryptoMindSim 通过 OpenAI 兼容接口接入大语言模型，用于市场分析、交易建议、策略执行与错误记录展示。
 
----
-
-## 支持的 AI 模型
-
-| 模型 | 提供商 |
-|------|--------|
-| GPT-5.2 | OpenAI |
-| o3 Pro | OpenAI |
-| Claude 4.5 Opus | Anthropic |
-| Gemini 3 Pro | Google |
-| DeepSeek R1 | DeepSeek |
-| Grok 4 | xAI |
-| Kimi K2 | Moonshot |
-| Qwen3 Max | Alibaba |
-
-默认模型：`claude-4.5-opus`，温度 `0.7`，最大 token `2000`。
-
----
+项目本身不绑定任何特定 AI 平台，你可以使用任意兼容 OpenAI 接口的服务提供商。
 
 ## 配置方式
 
-### API Key 存储（双重同步机制）
+AI 配置跟随账号保存，而不是写入 `.env`：
 
-AI 配置采用 **浏览器 localStorage + 服务器数据库** 双重存储：
+- 注册账号时填写 `AI API Key`
+- 可选填写 `AI Base URL`
+- 可选填写 `AI 模型`
+- 登录后可在“设置”里修改
 
-- **前端**：`settings.js` 通过 `getAIConfig()` / `saveAIConfig()` 管理 localStorage
-- **后端**：User 表的 `ai_api_key`、`ai_base_url` 字段
-- **同步时机**：登录时自动同步、保存设置时同步、页面刷新时同步
-
-#### 同步 API
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| PUT | `/api/users/{user_id}/ai-config` | 保存 AI 配置到服务器 |
-| GET | `/api/users/{user_id}/ai-config` | 从服务器获取 AI 配置 |
-| DELETE | `/api/users/{user_id}/ai-config` | 清除服务器端 AI 配置 |
-
-### 环境变量（服务端默认值）
-
-```bash
-AI_API_KEY=your_api_key_here
-AI_BASE_URL=https://api.hodlai.fun/v1
-```
-
----
-
-## AI API 接口
+## 服务端接口
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/ai/models` | 获取支持的模型列表 |
-| POST | `/api/ai/analyze` | AI 市场分析 |
-| POST | `/api/ai/advice` | AI 交易建议 |
+| `PUT` | `/api/users/{user_id}/ai-config` | 更新当前账号的 AI 配置 |
+| `GET` | `/api/users/{user_id}/ai-config` | 获取当前账号的 AI 配置状态 |
+| `DELETE` | `/api/users/{user_id}/ai-config` | 删除当前账号的 AI 配置 |
 
-### AI 服务架构
+返回结果中会对 API Key 做掩码处理，不会把完整密钥直接暴露给前端。
 
-- `backend/services/ai_service.py` — AI 服务核心，使用 `httpx` 调用 OpenAI 兼容 API
-- `backend/api/ai_routes.py` — AI 相关路由
-- `backend/services/ai_scheduler.py` — 定时任务调度
+## 推荐填写方式
 
----
+- `AI API Key`：你的模型服务密钥
+- `AI Base URL`：兼容 OpenAI 接口的服务地址，例如 `https://api.openai.com/v1`
+- `AI 模型`：例如 `gpt-4o`、`claude-4.5-opus` 或其它兼容模型名
 
-## AI 对话系统
+## AI 相关能力
 
-用户可通过 Web 界面与 AI 助手实时对话：
+### 1. AI 市场分析
 
-- 对话历史保存到 `AIConversation` 表，刷新不丢失
-- 支持快捷咨询按钮（市场趋势、开仓建议、止损止盈、交易分析）
+用于对当前市场状态做解释和总结，帮助新手理解价格、趋势和风险。
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/users/{user_id}/conversations` | 获取对话历史 |
-| POST | `/api/users/{user_id}/conversations` | 发送消息给 AI |
+### 2. AI 交易建议
 
----
+用于生成开仓、平仓或观望建议。
 
-## AI 决策日志
+### 3. AI 对话
 
-所有 AI 决策过程自动记录到 `AIDecisionLog` 表：
+支持用户与 AI 助手进行问答式交流，查看分析和建议。
 
-- 策略名称、市场上下文、AI 推理过程
-- 决策结果（BUY/SELL/HOLD）、是否实际执行
+### 4. AI 决策日志
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/users/{user_id}/ai-decisions` | 获取 AI 决策日志 |
+系统会记录：
 
----
+- 策略名称
+- 市场上下文
+- AI 推理过程
+- 决策结果
+- 是否实际执行
 
-## 策略自动执行
+### 5. 错误记录
 
-策略执行器 `backend/engine/strategy_executor.py` 负责自动化交易：
+如果 AI 返回格式异常、接口调用失败或策略执行报错，系统会把错误写入交易记录，并在交易详情中展示错误原因。
 
-1. 读取用户激活的策略和 AI 配置（从 User 表获取 `ai_api_key`）
-2. 获取当前市场数据，构建上下文
-3. 调用 AI 模型分析，获取 JSON 格式决策
-4. 根据决策自动执行开仓/平仓操作
+## 策略执行说明
 
-### AI 决策 JSON 格式
+策略执行器会：
 
-```json
-{
-  "action": "open",
-  "direction": "long",
-  "quantity": 0.1,
-  "leverage": 5,
-  "reasoning": "MACD 金叉确认，RSI 处于强势区间..."
-}
-```
+1. 读取当前账号的 AI 配置
+2. 拉取市场数据并构建上下文
+3. 请求模型生成决策
+4. 根据决策执行模拟开仓 / 平仓 / 观望
+5. 记录结果、日志和错误信息
 
-`action` 可选值：`open`（开仓）、`close`（平仓）、`hold`（观望）
+## 注意事项
+
+- 本项目不内置任何第三方 AI 服务账号
+- 请勿把真实密钥提交到 Git 仓库
+- 建议为演示环境单独申请测试密钥
+- 如果服务不兼容 OpenAI 风格接口，可能需要自行适配
