@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from backend.core.database import SessionLocal, engine
 from backend.core.main import app
-from backend.core.models import Base, Position, Trade, TradeSide, TradeType, User
+from backend.core.models import Base, Position, PromptConfig, Trade, TradeSide, TradeType, User
 from backend.engine.engine import trading_engine
 
 
@@ -161,6 +161,85 @@ class DeleteUserTestCase(unittest.TestCase):
         self.assertEqual(payload["base_url"], "https://api.openai.com/v1")
         self.assertEqual(payload["ai_model"], "claude-4.5-opus")
         self.assertTrue(payload["api_key_masked"])
+        self.assertEqual(payload["trading_fee_rate"], 0.0004)
+        self.assertEqual(payload["liquidation_threshold"], 0.9)
+        self.assertEqual(payload["initial_balance"], 10000.0)
+
+    def test_user_can_update_trading_settings_in_settings_api(self):
+        register = self.client.post(
+            "/api/register",
+            json=register_payload("henry"),
+        )
+        self.assertEqual(register.status_code, 201)
+        user_id = register.json()["id"]
+
+        update = self.client.put(
+            f"/api/users/{user_id}/ai-config",
+            json={
+                "base_url": "https://api.openai.com/v1",
+                "ai_model": "claude-4.5-opus",
+                "trading_fee_rate": 0.0012,
+                "liquidation_threshold": 0.75,
+                "initial_balance": 250000.0,
+            },
+        )
+        self.assertEqual(update.status_code, 200)
+        payload = update.json()
+
+        self.assertEqual(payload["trading_fee_rate"], 0.0012)
+        self.assertEqual(payload["liquidation_threshold"], 0.75)
+        self.assertEqual(payload["initial_balance"], 250000.0)
+
+        fetched = self.client.get(f"/api/users/{user_id}/ai-config")
+        self.assertEqual(fetched.status_code, 200)
+        fetched_payload = fetched.json()
+        self.assertEqual(fetched_payload["trading_fee_rate"], 0.0012)
+        self.assertEqual(fetched_payload["liquidation_threshold"], 0.75)
+        self.assertEqual(fetched_payload["initial_balance"], 250000.0)
+
+    def test_liquidation_auto_deactivates_strategy(self):
+        register = self.client.post(
+            "/api/register",
+            json=register_payload("liquidated-user"),
+        )
+        self.assertEqual(register.status_code, 201)
+        user_id = register.json()["id"]
+
+        with SessionLocal() as db:
+            strategy = db.query(PromptConfig).filter(PromptConfig.user_id == user_id).first()
+            self.assertIsNotNone(strategy)
+            strategy.is_active = True
+
+            position = Position(
+                user_id=user_id,
+                symbol="BTC/USDT",
+                side=TradeSide.LONG,
+                entry_price=50000.0,
+                quantity=0.01,
+                leverage=5,
+                margin=100.0,
+                unrealized_pnl=-100.0,
+                liquidation_price=45000.0,
+                is_open=True,
+            )
+            db.add(position)
+            db.commit()
+
+            trading_engine.check_liquidation(db)
+            db.commit()
+
+            db.refresh(strategy)
+            db.refresh(position)
+
+            self.assertFalse(strategy.is_active)
+            self.assertFalse(position.is_open)
+
+            liquidation_trade = db.query(Trade).filter(
+                Trade.user_id == user_id,
+                Trade.trade_type == TradeType.LIQUIDATION,
+                Trade.symbol == "BTC/USDT",
+            ).first()
+            self.assertIsNotNone(liquidation_trade)
 
     def test_error_trade_returns_error_message(self):
         register = self.client.post(
@@ -242,4 +321,5 @@ class DeleteUserTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

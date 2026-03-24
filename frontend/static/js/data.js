@@ -2,6 +2,24 @@
 
 // updateStrategies 是 updatePrompts 的别名
 const updateStrategies = (...args) => updatePrompts(...args);
+let currentUserTradingRules = null;
+
+function renderAccountTradingRules(user) {
+    const container = document.getElementById('accountTradingRules');
+    if (!container || !user) return;
+
+    currentUserTradingRules = {
+        trading_fee_rate: user.trading_fee_rate,
+        liquidation_threshold: user.liquidation_threshold,
+        initial_balance: user.initial_balance,
+    };
+
+    container.innerHTML = `
+        <span class="badge badge-info">手续费率 ${(Number(user.trading_fee_rate || 0) * 100).toFixed(2)}%</span>
+        <span class="badge badge-warning">爆仓阈值 ${(Number(user.liquidation_threshold || 0) * 100).toFixed(2)}%</span>
+        <span class="badge badge-success">初始资金 ${Number(user.initial_balance || 0).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} USDT</span>
+    `;
+}
 
 // 手动刷新按钮
 async function refreshData() {
@@ -74,6 +92,7 @@ async function updateUserInfo() {
         document.getElementById('balance').textContent = user.balance.toFixed(2) + ' USDT';
         document.getElementById('positionValue').textContent = positionValue.toFixed(2) + ' USDT';
         document.getElementById('totalAssets').textContent = totalAssets.toFixed(2) + ' USDT';
+        renderAccountTradingRules(user);
 
         const roiElement = document.getElementById('roi');
         roiElement.textContent = roi + '%';
@@ -346,6 +365,16 @@ async function updatePrompts() {
             return;
         }
 
+        if (!currentUserTradingRules) {
+            try {
+                const userResponse = await fetch(`/api/users/${userId}`);
+                if (userResponse.ok) {
+                    const userData = await userResponse.json();
+                    renderAccountTradingRules(userData);
+                }
+            } catch (_) {}
+        }
+
         const response = await fetch(`/api/strategies?user_id=${userId}`);
         if (!response.ok) {
             throw new Error('获取策略失败');
@@ -394,6 +423,18 @@ async function updatePrompts() {
             const cls = colorMap[d] || 'badge-info';
             return `<span class="badge ${cls} text-xs">${d}</span><span class="text-xs ml-1" style="color:var(--text-secondary)">${time}</span>`;
         })() : '';
+        const promptOptimizationText = p.auto_optimize_prompt
+            ? `🧠 自动修正 / 每 ${p.prompt_optimization_interval || 1} 次 / HOLD ${p.prompt_optimization_include_hold ? '计入' : '不计入'}`
+            : '🧠 自动修正已关闭';
+        const tradingRuleText = currentUserTradingRules
+            ? `⚙️ 手续费 ${(Number(currentUserTradingRules.trading_fee_rate || 0) * 100).toFixed(2)}% / 爆仓阈值 ${(Number(currentUserTradingRules.liquidation_threshold || 0) * 100).toFixed(2)}% / 初始资金 ${Number(currentUserTradingRules.initial_balance || 0).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+            : '';
+
+        const promptPreview = p.prompt_text
+            ? p.prompt_text.length > 200
+                ? p.prompt_text.substring(0, 200) + '…'
+                : p.prompt_text
+            : '';
 
         container.innerHTML = `
             <div class="card rounded p-4">
@@ -407,10 +448,18 @@ async function updatePrompts() {
                         <div class="flex gap-3 text-xs flex-wrap" style="color: var(--text-secondary)">
                             <span>📊 ${p.symbol || 'BTC/USDT'}</span>
                             <span>⏱️ ${p.execution_interval || 1}分钟</span>
+                            <span>${promptOptimizationText}</span>
+                            ${tradingRuleText ? `<span>${tradingRuleText}</span>` : ''}
                             ${decisionBadge ? `<span>最近决策: ${decisionBadge}</span>` : ''}
                         </div>
                     </div>
                 </div>
+                ${promptPreview ? `
+                <div class="mb-3">
+                    <div class="text-xs mb-1 font-semibold" style="color: var(--text-secondary)">当前提示词</div>
+                    <pre class="p-3 rounded text-xs whitespace-pre-wrap" style="background: var(--bg-primary); border: 1px solid var(--border-color); color: var(--text-secondary); max-height: 120px; overflow-y: auto;">${escapeHtml(promptPreview)}</pre>
+                </div>
+                ` : ''}
                 <div class="flex gap-2 flex-wrap">
                     ${!p.is_active ? `
                         <button onclick="activateStrategy(${p.id})"
@@ -426,6 +475,11 @@ async function updatePrompts() {
                     <button onclick="editStrategy(${p.id})"
                         class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded text-sm transition">
                         编辑策略
+                    </button>
+                    <button onclick="showPromptRevisionHistory(${p.id})"
+                        class="px-4 py-2 rounded text-sm transition"
+                        style="background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color);">
+                        提示词历史
                     </button>
                     <button onclick="deleteStrategy(${p.id})"
                         class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded text-sm transition">

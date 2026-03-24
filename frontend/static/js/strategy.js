@@ -4,8 +4,126 @@ let availableModels = [];
 let availableSymbols = [];
 let presetStrategies = [];
 let currentEditingPrompt = null;
+let currentStrategyBasePrompt = '';
 let strategySymbolAnchor = null;
 let strategyPositionConflictState = null;
+
+function getEditingStrategyId() {
+    const editingStrategyIdInput = document.getElementById('editingStrategyId');
+    const rawValue = editingStrategyIdInput?.value;
+    const strategyId = Number(rawValue);
+    return Number.isFinite(strategyId) && strategyId > 0 ? strategyId : null;
+}
+
+function resolveStrategyBasePrompt(strategy) {
+    return String(strategy?.base_prompt_text || strategy?.prompt_text || '').trim();
+}
+
+function findMatchingPresetIndex(strategy) {
+    if (!strategy || !Array.isArray(presetStrategies) || presetStrategies.length === 0) {
+        return -1;
+    }
+
+    const basePrompt = resolveStrategyBasePrompt(strategy);
+    if (basePrompt) {
+        const indexByBasePrompt = presetStrategies.findIndex(p => (p.prompt_text || '').trim() === basePrompt);
+        if (indexByBasePrompt >= 0) {
+            return indexByBasePrompt;
+        }
+    }
+
+    return presetStrategies.findIndex(p => p.name === strategy.name);
+}
+
+function applyPresetStrategy(presetStrategy) {
+    if (!presetStrategy) return;
+
+    const editingStrategyId = getEditingStrategyId();
+    const isEditingExistingStrategy = Boolean(editingStrategyId || currentEditingPrompt?.id);
+
+    const draftStrategy = {
+        ...presetStrategy,
+        id: isEditingExistingStrategy ? (currentEditingPrompt?.id || editingStrategyId) : undefined,
+        prompt_text: presetStrategy.prompt_text || '',
+        base_prompt_text: presetStrategy.prompt_text || '',
+        symbol: document.getElementById('strategySymbol')?.value || getDefaultStrategySymbol(),
+        execution_interval: 1,
+        auto_optimize_prompt: false,
+        prompt_optimization_interval: 1,
+        prompt_optimization_include_hold: true,
+    };
+
+    if (isEditingExistingStrategy) {
+        currentEditingPrompt = {
+            ...(currentEditingPrompt || {}),
+            id: currentEditingPrompt?.id || editingStrategyId,
+            name: draftStrategy.name,
+            description: draftStrategy.description,
+            prompt_text: draftStrategy.prompt_text,
+            base_prompt_text: draftStrategy.base_prompt_text,
+            symbol: draftStrategy.symbol,
+            execution_interval: draftStrategy.execution_interval,
+            auto_optimize_prompt: draftStrategy.auto_optimize_prompt,
+            prompt_optimization_interval: draftStrategy.prompt_optimization_interval,
+            prompt_optimization_include_hold: draftStrategy.prompt_optimization_include_hold,
+        };
+    } else {
+        currentEditingPrompt = null;
+    }
+
+    fillStrategyForm(draftStrategy);
+
+    const editingStrategyIdInput = document.getElementById('editingStrategyId');
+    if (editingStrategyIdInput) {
+        editingStrategyIdInput.value = isEditingExistingStrategy ? String(currentEditingPrompt?.id || editingStrategyId) : '';
+    }
+}
+
+function escapePromptHistoryHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function getPromptRevisionSourceLabel(source) {
+    const labels = {
+        CREATE: '创建初始版',
+        MANUAL_UPDATE: '手动修改',
+        RESET_DEFAULT: '恢复预设',
+        AUTO_OPTIMIZE: '自动修正'
+    };
+    return labels[source] || source || '未知';
+}
+
+function getPromptRevisionSourceClass(source) {
+    const map = {
+        CREATE: 'badge-info',
+        MANUAL_UPDATE: 'badge-info',
+        RESET_DEFAULT: 'badge-warning',
+        AUTO_OPTIMIZE: 'badge-success'
+    };
+    return map[source] || 'badge-info';
+}
+
+function formatPromptRevisionTime(time) {
+    if (!time) return '-';
+    return new Date(time).toLocaleString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+function togglePromptOptimizationSettings() {
+    const enabled = document.getElementById('strategyAutoOptimizePrompt')?.checked;
+    const settings = document.getElementById('strategyPromptOptimizationSettings');
+    if (!settings) return;
+    settings.classList.toggle('hidden', !enabled);
+}
 
 function getDefaultStrategySymbol() {
     return availableSymbols[0]?.symbol || 'BTC/USDT';
@@ -134,7 +252,7 @@ async function closeConflictingPositionsBeforeSwitch() {
     }
 }
 
-// 加载可用交易对列表
+// 加载可用交易对列表（返回 Promise 以便 await）
 async function loadAvailableSymbols() {
     try {
         const response = await fetch('/api/strategies/symbols');
@@ -224,6 +342,9 @@ async function onPresetStrategyChange() {
     const selectedIndex = presetSelect.value;
 
     if (selectedIndex === '') {
+        if (getEditingStrategyId()) {
+            return;
+        }
         clearStrategyForm();
         return;
     }
@@ -232,24 +353,41 @@ async function onPresetStrategyChange() {
     const strategy = presetStrategies[parseInt(selectedIndex)];
     if (!strategy) return;
 
-    // 填充表单（这是预设模板，不是用户的策略）
-    currentEditingPrompt = null; // 清空当前编辑的策略，因为这是新建
-    fillStrategyForm(strategy);
+    // 基于默认模板复制一份可编辑提示词，保留模板作为风格基准
+    applyPresetStrategy(strategy);
 
-    // 显示保存按钮，隐藏重置按钮（因为这是新建，还没保存）
+    // 编辑已有策略时仍然保留更新态；新建时隐藏重置按钮
     document.getElementById('saveStrategyBtn').classList.remove('hidden');
-    document.getElementById('resetStrategyBtn').classList.add('hidden');
+    if (!getEditingStrategyId()) {
+        document.getElementById('resetStrategyBtn').classList.add('hidden');
+    }
 }
 
 // 填充策略表单
 function fillStrategyForm(strategy) {
+    currentStrategyBasePrompt = resolveStrategyBasePrompt(strategy);
+
     document.getElementById('strategyName').value = strategy.name || '';
     document.getElementById('strategyDescription').value = strategy.description || '';
     document.getElementById('strategyPrompt').value = strategy.prompt_text || '';
     document.getElementById('strategySymbol').value = strategy.symbol || getDefaultStrategySymbol();
     document.getElementById('strategyInterval').value = strategy.execution_interval || 1;
+    document.getElementById('strategyAutoOptimizePrompt').checked = Boolean(strategy.auto_optimize_prompt);
+    document.getElementById('strategyPromptOptimizationInterval').value = strategy.prompt_optimization_interval || 1;
+    document.getElementById('strategyPromptOptimizationIncludeHold').checked = strategy.prompt_optimization_include_hold !== false;
+    togglePromptOptimizationSettings();
     setStrategySymbolAnchor(strategy.symbol || getDefaultStrategySymbol());
     hideStrategyPositionConflict();
+
+    const editingStrategyIdInput = document.getElementById('editingStrategyId');
+    if (editingStrategyIdInput) {
+        editingStrategyIdInput.value = strategy.id || '';
+    }
+
+    const modalTitle = document.getElementById('strategyModalTitle');
+    if (modalTitle) {
+        modalTitle.textContent = strategy.id ? '编辑策略' : '创建策略';
+    }
 
     // 显示保存按钮
     document.getElementById('saveStrategyBtn').classList.remove('hidden');
@@ -269,9 +407,29 @@ function clearStrategyForm() {
     document.getElementById('strategySymbol').value = getDefaultStrategySymbol();
     document.getElementById('strategyPrompt').value = '';
     document.getElementById('strategyInterval').value = '1';
+    document.getElementById('strategyAutoOptimizePrompt').checked = false;
+    document.getElementById('strategyPromptOptimizationInterval').value = '1';
+    document.getElementById('strategyPromptOptimizationIncludeHold').checked = true;
+    togglePromptOptimizationSettings();
     currentEditingPrompt = null;
+    currentStrategyBasePrompt = '';
     setStrategySymbolAnchor(getDefaultStrategySymbol());
     hideStrategyPositionConflict();
+
+    const editingStrategyIdInput = document.getElementById('editingStrategyId');
+    if (editingStrategyIdInput) {
+        editingStrategyIdInput.value = '';
+    }
+
+    const presetSelect = document.getElementById('strategyPresetSelect');
+    if (presetSelect) {
+        presetSelect.value = '';
+    }
+
+    const modalTitle = document.getElementById('strategyModalTitle');
+    if (modalTitle) {
+        modalTitle.textContent = '创建策略';
+    }
 
     document.getElementById('resetStrategyBtn').classList.add('hidden');
     document.getElementById('saveStrategyBtn').classList.remove('hidden');
@@ -284,6 +442,9 @@ async function saveStrategy() {
     const symbol = document.getElementById('strategySymbol').value;
     const prompt_text = document.getElementById('strategyPrompt').value.trim();
     const execution_interval = parseInt(document.getElementById('strategyInterval').value) || 1;
+    const auto_optimize_prompt = document.getElementById('strategyAutoOptimizePrompt').checked;
+    const prompt_optimization_interval = parseInt(document.getElementById('strategyPromptOptimizationInterval').value) || 1;
+    const prompt_optimization_include_hold = document.getElementById('strategyPromptOptimizationIncludeHold').checked;
 
     if (!name) {
         showToast(t('strategyNameRequired'), 'warning');
@@ -300,6 +461,11 @@ async function saveStrategy() {
         return;
     }
 
+    if (auto_optimize_prompt && prompt_optimization_interval < 1) {
+        showToast('提示词修正间隔最小为1次决策', 'warning');
+        return;
+    }
+
     const userId = localStorage.getItem('userId');
     if (!userId) {
         showToast(t('pleaseLoginFirst'), 'warning');
@@ -311,14 +477,19 @@ async function saveStrategy() {
         description,
         symbol,
         prompt_text,
-        execution_interval
+        base_prompt_text: currentStrategyBasePrompt || currentEditingPrompt?.base_prompt_text || prompt_text,
+        execution_interval,
+        auto_optimize_prompt,
+        prompt_optimization_interval,
+        prompt_optimization_include_hold
     };
 
     try {
         let response;
-        if (currentEditingPrompt && currentEditingPrompt.id) {
+        const editingStrategyId = getEditingStrategyId() || currentEditingPrompt?.id || null;
+        if (editingStrategyId) {
             // 更新现有策略
-            response = await fetch(`/api/strategies/${currentEditingPrompt.id}?user_id=${userId}`, {
+            response = await fetch(`/api/strategies/${editingStrategyId}?user_id=${userId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(strategyData)
@@ -367,7 +538,8 @@ async function resetToDefault() {
 
     try {
         // 查找对应的预设策略
-        const presetStrategy = presetStrategies.find(p => p.name === currentEditingPrompt.name);
+        const presetIndex = findMatchingPresetIndex(currentEditingPrompt);
+        const presetStrategy = presetIndex >= 0 ? presetStrategies[presetIndex] : null;
         if (!presetStrategy) {
             showToast(t('noPresetTemplate'), 'warning');
             return;
@@ -380,7 +552,9 @@ async function resetToDefault() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 description: presetStrategy.description,
-                prompt_text: presetStrategy.prompt_text
+                prompt_text: presetStrategy.prompt_text,
+                base_prompt_text: presetStrategy.prompt_text,
+                revision_source: 'RESET_DEFAULT'
             })
         });
 
@@ -402,8 +576,88 @@ async function resetToDefault() {
     }
 }
 
+function hidePromptRevisionHistory() {
+    const modal = document.getElementById('promptRevisionHistoryModal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function renderPromptRevisionHistoryItems(revisions) {
+    if (!Array.isArray(revisions) || revisions.length === 0) {
+        return `
+            <div class="text-center py-10" style="color: var(--text-secondary)">
+                暂无提示词修正历史
+            </div>
+        `;
+    }
+
+    return revisions.map((item) => {
+        const badgeClass = getPromptRevisionSourceClass(item.source);
+        const previousBlock = item.previous_prompt_text
+            ? `
+                <details class="mt-3">
+                    <summary class="cursor-pointer text-sm" style="color: var(--text-secondary)">查看修正前提示词</summary>
+                    <pre class="mt-2 p-3 rounded text-xs whitespace-pre-wrap" style="background: var(--bg-primary); border: 1px solid var(--border-color); color: var(--text-secondary);">${escapePromptHistoryHtml(item.previous_prompt_text)}</pre>
+                </details>
+            `
+            : '';
+
+        return `
+            <div class="card rounded-lg p-4">
+                <div class="flex flex-wrap items-center gap-2 mb-3">
+                    <span class="badge ${badgeClass} text-xs">${escapePromptHistoryHtml(getPromptRevisionSourceLabel(item.source))}</span>
+                    <span class="text-xs" style="color: var(--text-secondary)">版本 #${item.revision_no}</span>
+                    <span class="text-xs" style="color: var(--text-secondary)">${escapePromptHistoryHtml(formatPromptRevisionTime(item.created_at))}</span>
+                </div>
+                ${item.summary ? `<div class="text-sm mb-3" style="color: var(--text-secondary)">${escapePromptHistoryHtml(item.summary)}</div>` : ''}
+                <div class="grid gap-3 lg:grid-cols-2">
+                    <div>
+                        <div class="text-xs mb-2 font-semibold" style="color: var(--text-secondary)">当前版本提示词</div>
+                        <pre class="p-3 rounded text-xs whitespace-pre-wrap" style="background: var(--bg-primary); border: 1px solid var(--border-color); color: var(--text-primary);">${escapePromptHistoryHtml(item.prompt_text)}</pre>
+                    </div>
+                    <div>
+                        <div class="text-xs mb-2 font-semibold" style="color: var(--text-secondary)">风格基准提示词</div>
+                        <pre class="p-3 rounded text-xs whitespace-pre-wrap" style="background: var(--bg-primary); border: 1px solid var(--border-color); color: var(--text-primary);">${escapePromptHistoryHtml(item.base_prompt_text || item.prompt_text)}</pre>
+                    </div>
+                </div>
+                ${previousBlock}
+            </div>
+        `;
+    }).join('');
+}
+
+async function showPromptRevisionHistory(strategyId, strategyName = '') {
+    const modal = document.getElementById('promptRevisionHistoryModal');
+    const content = document.getElementById('promptRevisionHistoryContent');
+    const subtitle = document.getElementById('promptRevisionHistorySubtitle');
+    const userId = localStorage.getItem('userId');
+
+    if (!modal || !content || !userId) return;
+
+    subtitle.textContent = strategyName
+        ? `策略「${strategyName}」整个生命周期内的提示词版本记录`
+        : '跟随当前策略整个生命周期的版本记录';
+    content.innerHTML = '<div class="text-center py-8" style="color: var(--text-secondary)">加载中...</div>';
+    modal.classList.remove('hidden');
+
+    try {
+        const response = await fetch(`/api/strategies/${strategyId}/prompt-revisions?user_id=${userId}&limit=200`);
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || '加载提示词修正历史失败');
+        }
+
+        const revisions = await response.json();
+        content.innerHTML = renderPromptRevisionHistoryItems(revisions);
+    } catch (error) {
+        console.error('加载提示词修正历史失败:', error);
+        content.innerHTML = `<div class="text-center py-8" style="color: var(--danger)">${escapePromptHistoryHtml(error.message || '加载失败')}</div>`;
+    }
+}
+
 // 显示策略创建模态框
-async function showCreateStrategyModal() {
+async function showCreateStrategyModal(options = {}) {
+    const { strategy = null } = options;
+
     // 检查是否已配置 API Key（检查本地和服务器）
     const localConfig = typeof getAIConfig === 'function' ? getAIConfig() : null;
     const serverConfig = typeof loadAIConfigFromServer === 'function' ? await loadAIConfigFromServer() : null;
@@ -420,8 +674,19 @@ async function showCreateStrategyModal() {
     if (modal) {
         modal.classList.remove('hidden');
         clearStrategyForm();
-        loadAvailableSymbols();
-        loadPresetStrategies();
+        // 等待下拉框数据加载完成，确保后续 fillStrategyForm 能正确回显
+        await Promise.all([loadAvailableSymbols(), loadPresetStrategies()]);
+
+        if (strategy && strategy.id) {
+            currentEditingPrompt = strategy;
+            fillStrategyForm(strategy);
+
+            const presetIndex = findMatchingPresetIndex(strategy);
+            document.getElementById('strategyPresetSelect').value = presetIndex >= 0 ? String(presetIndex) : '';
+        } else if (presetStrategies.length > 0) {
+            document.getElementById('strategyPresetSelect').value = '0';
+            applyPresetStrategy(presetStrategies[0]);
+        }
     }
 }
 
@@ -441,17 +706,7 @@ async function editStrategy(strategyId) {
         const response = await fetch(`/api/strategies/${strategyId}?user_id=${userId}`);
         if (response.ok) {
             const strategy = await response.json();
-            showCreateStrategyModal();
-            currentEditingPrompt = strategy; // 在 showCreateStrategyModal 清空表单后再赋值
-            fillStrategyForm(strategy);
-
-            // 尝试匹配预设策略下拉框
-            const presetIndex = presetStrategies.findIndex(p => p.name === strategy.name);
-            if (presetIndex >= 0) {
-                document.getElementById('strategyPresetSelect').value = presetIndex;
-            } else {
-                document.getElementById('strategyPresetSelect').value = '';
-            }
+            await showCreateStrategyModal({ strategy });
 
             // 显示保存和重置按钮
             document.getElementById('saveStrategyBtn').classList.remove('hidden');

@@ -1,938 +1,785 @@
-"""
-策略执行定时任务
-"""
+﻿"""策略执行器"""
+
+from __future__ import annotations
+
+import json
 import logging
 import re
-from datetime import datetime, timedelta
+from collections import Counter
+from datetime import timedelta
+
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
+
 from backend.core.database import SessionLocal
-from backend.core.models import PromptConfig, User, Position, MarketPrice, Trade, TradeSide, TradeType, get_local_time
-from backend.core.trade_utils import calculate_fee, calculate_holding_seconds, calculate_liquidation_price, calculate_notional_value, calculate_roi_pct
-from backend.services.ai_service import ai_service
+from backend.core.models import (
+    AIDecisionLog,
+    MarketPrice,
+    Position,
+    PromptConfig,
+    Trade,
+    TradeSide,
+    TradeType,
+    User,
+    get_local_time,
+)
+from backend.core.trade_utils import (
+    calculate_fee,
+    calculate_holding_seconds,
+    calculate_liquidation_price,
+    calculate_notional_value,
+    calculate_roi_pct,
+)
+from backend.engine.engine import trading_engine
+from backend.services.ai_service import AIAPIError, ai_service
+from backend.services.prompt_revision_service import record_prompt_revision
 
 logger = logging.getLogger(__name__)
 
+MAX_HISTORY_TRADE_RECORDS = 120
+MAX_HISTORY_DECISION_RECORDS = 60
+MAX_HISTORY_EVENT_LINES = 6
+
+
+def _safe_average(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def _safe_load_market_data(payload: str | None) -> dict:
+    if not payload:
+        return {}
+    try:
+        return json.loads(payload)
+    except Exception:
+        return {}
+
+
+def _short_text(text: str | None, limit: int = 88) -> str:
+    if not text:
+        return ""
+    normalized = re.sub(r"\s+", " ", text).strip()
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[: limit - 1]}…"
+
+
+def _format_duration(seconds: int | None) -> str:
+    if not seconds:
+        return "-"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    return f"{seconds / 3600:.1f}h"
+
+
+def _extract_trade_note(trade: Trade) -> str:
+    data = _safe_load_market_data(trade.market_data)
+    if trade.trade_type == TradeType.ERROR:
+        return _short_text(data.get("error") or data.get("exception") or "执行异常")
+    if trade.trade_type == TradeType.HOLD:
+        return _short_text(data.get("reasoning") or data.get("decision") or "继续观望")
+    if trade.trade_type == TradeType.CLOSE:
+        return _short_text(data.get("close_reason") or trade.close_reason or "正常平仓")
+    if trade.trade_type == TradeType.OPEN:
+        side = trade.position_side.value if trade.position_side else trade.side.value
+        return f"{side} {trade.leverage}x"
+    return ""
+
+
+def count_prompt_optimization_decisions(db: Session, strategy: PromptConfig) -> int:
+    decisions = db.query(AIDecisionLog).filter(
+        AIDecisionLog.user_id == strategy.user_id,
+        AIDecisionLog.prompt_name == strategy.name,
+    )
+    if strategy.last_prompt_optimized_at:
+        decisions = decisions.filter(AIDecisionLog.created_at > strategy.last_prompt_optimized_at)
+    rows = decisions.order_by(AIDecisionLog.created_at.desc()).limit(MAX_HISTORY_DECISION_RECORDS).all()
+    if strategy.prompt_optimization_include_hold:
+        return len(rows)
+    return sum(1 for row in rows if (row.decision or "").upper() != "HOLD")
+
+
+def should_optimize_prompt(db: Session, strategy: PromptConfig) -> bool:
+    if not strategy.auto_optimize_prompt:
+        return False
+    if not strategy.last_prompt_optimized_at:
+        return True
+    interval = max(strategy.prompt_optimization_interval or 1, 1)
+    return count_prompt_optimization_decisions(db, strategy) >= interval
+
+
+def build_strategy_history_snapshot(db: Session, strategy: PromptConfig) -> dict:
+    trades = (
+        db.query(Trade)
+        .filter(
+            Trade.user_id == strategy.user_id,
+            Trade.symbol == strategy.symbol,
+            Trade.trade_type.in_([TradeType.OPEN, TradeType.CLOSE, TradeType.HOLD, TradeType.ERROR]),
+            or_(
+                Trade.execution_source == "AI",
+                Trade.trade_type.in_([TradeType.HOLD, TradeType.ERROR]),
+            ),
+        )
+        .order_by(Trade.created_at.desc())
+        .limit(MAX_HISTORY_TRADE_RECORDS)
+        .all()
+    )
+    decisions = (
+        db.query(AIDecisionLog)
+        .filter(
+            AIDecisionLog.user_id == strategy.user_id,
+            AIDecisionLog.prompt_name == strategy.name,
+        )
+        .order_by(AIDecisionLog.created_at.desc())
+        .limit(MAX_HISTORY_DECISION_RECORDS)
+        .all()
+    )
+
+    closes = [trade for trade in trades if trade.trade_type == TradeType.CLOSE]
+    pnl_values = [trade.pnl or 0.0 for trade in closes]
+    roi_values = [trade.roi_pct for trade in closes if trade.roi_pct is not None]
+    holding_values = [trade.holding_seconds for trade in closes if trade.holding_seconds]
+    realized_fee = sum((trade.fee_paid or 0.0) for trade in trades)
+    total_realized_pnl = sum(pnl_values)
+    fee_pressure = realized_fee / max(abs(total_realized_pnl), 1.0)
+    win_count = sum(1 for trade in closes if (trade.pnl or 0.0) > 0)
+
+    recent_actions = [(row.decision or "").upper() for row in decisions[:20] if row.decision]
+    recent_action_counter = Counter(recent_actions)
+
+    event_lines = []
+    for trade in reversed(trades[:MAX_HISTORY_EVENT_LINES]):
+        timestamp = trade.created_at.strftime("%m-%d %H:%M") if trade.created_at else "-"
+        note = _extract_trade_note(trade)
+        if trade.trade_type == TradeType.OPEN:
+            event_lines.append(
+                f"- {timestamp} OPEN qty {trade.quantity or 0:.6f} / lev {trade.leverage}x / fee ${trade.fee_paid or 0:,.2f} / {note}"
+            )
+        elif trade.trade_type == TradeType.CLOSE:
+            event_lines.append(
+                f"- {timestamp} CLOSE pnl ${trade.pnl or 0:,.2f} / roi {trade.roi_pct or 0:.2f}% / {note}"
+            )
+        elif trade.trade_type == TradeType.HOLD:
+            event_lines.append(f"- {timestamp} HOLD / {note}")
+        else:
+            event_lines.append(f"- {timestamp} ERROR / {note}")
+
+    insights: list[str] = []
+    if closes and len(closes) >= 3 and (win_count / max(len(closes), 1)) < 0.4:
+        insights.append("最近平仓胜率偏低，需要收紧开仓条件并减少低质量试单")
+    if realized_fee > 0 and fee_pressure >= 0.35:
+        insights.append("最近平仓胜率偏低，需要收紧开仓条件并减少低质量试单")
+    if recent_action_counter.get("HOLD", 0) >= 8:
+        insights.append("最近 HOLD 次数较多，说明当前行情不清晰，应继续提高入场门槛")
+    if recent_action_counter.get("ERROR", 0) > 0:
+        insights.append("最近存在执行异常，需要检查输出格式、接口稳定性与 JSON 合法性")
+
+    return {
+        "trade_count": len(trades),
+        "decision_count": len(decisions),
+        "open_count": sum(1 for trade in trades if trade.trade_type == TradeType.OPEN),
+        "close_count": len(closes),
+        "hold_count": sum(1 for trade in trades if trade.trade_type == TradeType.HOLD),
+        "error_count": sum(1 for trade in trades if trade.trade_type == TradeType.ERROR),
+        "win_rate": (win_count / len(closes) * 100) if closes else 0.0,
+        "total_pnl": total_realized_pnl,
+        "avg_roi": _safe_average(roi_values),
+        "avg_holding_seconds": int(_safe_average(holding_values)) if holding_values else 0,
+        "total_fee": realized_fee,
+        "fee_pressure": fee_pressure,
+        "recent_action_counter": dict(recent_action_counter),
+        "recent_actions": recent_actions,
+        "insights": insights,
+        "event_lines": event_lines,
+    }
+
+
+def format_strategy_history_context(snapshot: dict) -> str:
+    if not snapshot:
+        return "暂无可用的策略历史摘要"
+
+    action_counter = snapshot.get("recent_action_counter", {})
+    action_text = " / ".join(
+        [
+            f"OPEN {action_counter.get('OPEN', 0)}",
+            f"CLOSE {action_counter.get('CLOSE', 0)}",
+            f"HOLD {action_counter.get('HOLD', 0)}",
+            f"ERROR {action_counter.get('ERROR', 0)}",
+        ]
+    )
+    insights = snapshot.get("insights") or ["暂无显著风险提示"]
+    event_lines = snapshot.get("event_lines") or ["- 暂无关键事件"]
+
+    return "\n".join(
+        [
+            "## 策略执行历史摘要",
+            f"- 样本统计: {snapshot.get('trade_count', 0)} 条 AI 交易记录 / {snapshot.get('decision_count', 0)} 条 AI 决策记录",
+            f"- 动作分布: {action_text}",
+            f"- 绩效表现: 胜率 {snapshot.get('win_rate', 0):.2f}% / 总盈亏 ${snapshot.get('total_pnl', 0):,.2f} / 平均 ROI {snapshot.get('avg_roi', 0):.2f}% / 平均持仓 {_format_duration(snapshot.get('avg_holding_seconds', 0))}",
+            f"- 成本压力: 累计手续费 ${snapshot.get('total_fee', 0):,.2f} / 手续费压力 {snapshot.get('fee_pressure', 0):.2f}",
+            f"- 最近 20 次动作: {action_text}",
+            "- 风险提示: " + "；".join(insights),
+            "- 最近关键事件:",
+            *event_lines,
+        ]
+    )
+
+
+def strip_json_comments(json_str: str) -> str:
+    json_str = re.sub(r"//.*?$", "", json_str, flags=re.M)
+    json_str = re.sub(r"/\*.*?\*/", "", json_str, flags=re.S)
+    return json_str.strip()
+
+
+def extract_json_from_content(content: str) -> str:
+    if not content:
+        return "{}"
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, flags=re.S)
+    if fenced:
+        return strip_json_comments(fenced.group(1))
+    start = content.find("{")
+    end = content.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return strip_json_comments(content[start : end + 1])
+    return strip_json_comments(content)
+
+
+def extract_prompt_text(content: str) -> str:
+    if not content:
+        return ""
+    text = content.strip()
+    fenced = re.search(r"```(?:text|markdown)?\s*(.*?)\s*```", text, flags=re.S)
+    if fenced:
+        text = fenced.group(1).strip()
+    return text.strip()
+
+
+async def maybe_optimize_strategy_prompt(
+    db: Session,
+    strategy: PromptConfig,
+    user: User,
+    history_snapshot: dict,
+) -> str:
+    base_prompt = strategy.base_prompt_text or strategy.prompt_text or ""
+    current_prompt = strategy.prompt_text or base_prompt
+    if not strategy.auto_optimize_prompt or not user.ai_api_key:
+        return current_prompt
+    if not should_optimize_prompt(db, strategy):
+        return current_prompt
+
+    history_context = format_strategy_history_context(history_snapshot)
+    messages = [
+        {
+            "role": "system",
+            "content": """你是一个交易策略提示词修正助手，只能围绕当前策略既有风格进行微调。
+要求：
+1. 必须保持策略名称对应的交易风格，不要改造成其他风格模板
+2. 必须结合历史交易表现、手续费压力和决策质量做小步修正
+3. 输出结果必须是可直接替换的完整提示词正文
+4. 不要输出 JSON、解释、前言或额外标记""",
+        },
+        {
+            "role": "user",
+            "content": f"""策略名称: {strategy.name}
+策略描述: {strategy.description or '-'}
+交易对: {strategy.symbol}
+
+风格基准提示词：
+{base_prompt}
+
+当前生效提示词：
+{current_prompt}
+
+历史表现摘要：
+{history_context}
+
+请基于以上信息修正提示词，但必须继续保持当前策略名称对应的风格。
+要求：
+- 保留原有交易风格与核心方法
+- 重点修正胜率、手续费、频繁交易和风险控制问题
+- 输出新的完整提示词正文
+- 不要输出任何解释、标题或额外格式""",
+        },
+    ]
+
+    try:
+        result = await ai_service.chat_completion(
+            messages=messages,
+            api_key=user.ai_api_key,
+            base_url=user.ai_base_url or "",
+            model=user.ai_model or "claude-4.5-opus",
+            temperature=0.2,
+            max_tokens=1400,
+        )
+        revised_prompt = extract_prompt_text(result["choices"][0]["message"]["content"])
+        strategy.last_prompt_optimized_at = get_local_time()
+        if revised_prompt and revised_prompt != current_prompt:
+            strategy.prompt_text = revised_prompt
+            strategy.prompt_revision_count = (strategy.prompt_revision_count or 0) + 1
+            summary = "系统根据历史表现自动修正提示词"
+            if history_snapshot.get("insights"):
+                summary = "；".join(history_snapshot["insights"][:3])
+            record_prompt_revision(
+                db=db,
+                strategy=strategy,
+                source="AUTO_OPTIMIZE",
+                summary=summary,
+                prompt_text=revised_prompt,
+                previous_prompt_text=current_prompt,
+                base_prompt_text=base_prompt,
+            )
+        db.commit()
+        db.refresh(strategy)
+        return strategy.prompt_text or current_prompt
+    except Exception as exc:
+        logger.warning("策略 %s 自动修正提示词失败: %s", strategy.name, exc)
+        db.rollback()
+        return current_prompt
+
 
 async def execute_active_strategies():
-    """
-    执行所有激活的策略
-    检查每个策略的执行间隔，如果到时间则执行
-    """
-    # 快速获取需要执行的策略ID列表，然后立即释放连接
     db = SessionLocal()
     try:
-        active_strategies = db.query(PromptConfig).filter(
-            PromptConfig.is_active == True
-        ).all()
-
-        # 提取需要执行的策略信息
-        strategies_to_execute = [
-            {"id": s.id, "name": s.name, "symbol": s.symbol}
-            for s in active_strategies
-            if should_execute_strategy(s)
+        active_ids = [
+            strategy.id
+            for strategy in db.query(PromptConfig).filter(PromptConfig.is_active.is_(True)).all()
+            if should_execute_strategy(strategy)
         ]
-
-        logger.debug(f"发现 {len(active_strategies)} 个激活的策略，{len(strategies_to_execute)} 个需要执行")
-    except Exception as e:
-        logger.error(
-            f"获取策略列表失败:\n"
-            f"  错误类型: {type(e).__name__}\n"
-            f"  错误信息: {str(e)}",
-            exc_info=True
-        )
-        return
     finally:
         db.close()
 
-    # 为每个策略创建独立的数据库会话
-    for strategy_info in strategies_to_execute:
+    for strategy_id in active_ids:
         db = SessionLocal()
         try:
-            # 重新查询策略对象（使用新的会话）
-            strategy = db.query(PromptConfig).filter(
-                PromptConfig.id == strategy_info["id"]
-            ).first()
-
+            strategy = db.query(PromptConfig).filter(PromptConfig.id == strategy_id).first()
             if strategy:
-                logger.info(f"执行策略: {strategy.name} ({strategy.symbol})")
                 await execute_single_strategy(db, strategy)
-            else:
-                logger.warning(f"策略 ID {strategy_info['id']} 不存在")
-        except Exception as e:
-            logger.error(
-                f"执行策略 {strategy_info['name']} 失败:\n"
-                f"  错误类型: {type(e).__name__}\n"
-                f"  错误信息: {str(e)}",
-                exc_info=True
-            )
+        except Exception as exc:
+            logger.exception("执行策略 %s 失败: %s", strategy_id, exc)
             db.rollback()
         finally:
             db.close()
 
 
 def should_execute_strategy(strategy: PromptConfig) -> bool:
-    """
-    判断策略是否应该执行
-
-    Args:
-        strategy: 策略对象
-
-    Returns:
-        是否应该执行
-    """
-    # 如果从未执行过，立即执行
-    if strategy.last_executed_at is None:
+    if not strategy.is_active:
+        return False
+    if not strategy.last_executed_at:
         return True
+    interval = max(strategy.execution_interval or 1, 1)
+    return get_local_time() - strategy.last_executed_at >= timedelta(minutes=interval)
 
-    # 计算距离上次执行的时间（秒）
-    # 确保使用本地时区时间进行比较
-    now = get_local_time()
-    # 如果 last_executed_at 带有时区信息，去掉时区信息（因为已经是本地时间）
-    if strategy.last_executed_at.tzinfo is not None:
-        last_executed = strategy.last_executed_at.replace(tzinfo=None)
-    else:
-        last_executed = strategy.last_executed_at
 
-    elapsed = (now - last_executed).total_seconds()
+def format_price_history(history: list) -> str:
+    if not history:
+        return "暂无价格历史"
+    return "\n".join(
+        f"  {item.get('timestamp', '-')}: ${item.get('price', 0):,.2f}" for item in history
+    )
 
-    # execution_interval 现在是分钟，需要转换为秒
-    interval_seconds = strategy.execution_interval * 60
 
-    # 如果超过执行间隔，则执行
-    return elapsed >= interval_seconds
+def format_positions(positions: list) -> str:
+    if not positions:
+        return "暂无持仓"
+    lines = []
+    for pos in positions:
+        lines.append(
+            f"- {pos.get('symbol')} / {pos.get('side')} / qty {pos.get('quantity', 0):.6f} / entry ${pos.get('entry_price', 0):,.2f} / lev {pos.get('leverage', 1)}x / margin ${pos.get('margin', 0):,.2f} / pnl ${pos.get('unrealized_pnl', 0):,.2f}"
+        )
+    return "\n".join(lines)
 
 
 async def execute_single_strategy(db: Session, strategy: PromptConfig):
-    """
-    执行单个策略
+    user = db.query(User).filter(User.id == strategy.user_id).first()
+    if not user:
+        return
 
-    Args:
-        db: 数据库会话
-        strategy: 策略对象
-    """
-    import json
-    from backend.core.models import AIDecisionLog
+    market_data = trading_engine.fetch_market_data(strategy.symbol)
+    current_price = market_data["current_price"] if market_data else trading_engine.fetch_current_price(strategy.symbol)
+    if current_price is None:
+        logger.warning("策略 %s 获取市场价格失败", strategy.name)
+        return
 
-    error_message = None
-    market_context = None
-    ai_reasoning = None
-    decision_action = "HOLD"
-    action_taken = False
-    user = None
-    current_price = 0
+    trading_engine.save_price_to_db(db, strategy.symbol, current_price)
 
-    try:
-        # 获取用户信息
-        user = db.query(User).filter(User.id == strategy.user_id).first()
-        if not user:
-            error_message = f"策略 {strategy.name} 的用户不存在"
-            logger.error(error_message)
-            return
-
-        # 获取市场数据（包含技术指标）
-        from backend.engine.engine import trading_engine
-        market_data = trading_engine.fetch_market_data(
-            symbol=strategy.symbol,
-            timeframe='1h',
-            limit=100
+    positions = (
+        db.query(Position)
+        .filter(
+            Position.user_id == user.id,
+            Position.symbol == strategy.symbol,
+            Position.is_open.is_(True),
         )
+        .all()
+    )
+    position_data = [
+        {
+            "id": position.id,
+            "symbol": position.symbol,
+            "side": position.side.value,
+            "entry_price": position.entry_price,
+            "quantity": position.quantity,
+            "leverage": position.leverage,
+            "margin": position.margin,
+            "unrealized_pnl": position.unrealized_pnl,
+            "liquidation_price": position.liquidation_price,
+        }
+        for position in positions
+    ]
 
-        if not market_data:
-            error_message = f"无法获取 {strategy.symbol} 的市场数据"
-            logger.error(error_message)
-            # 记录错误到交易历史
-            trade = Trade(
-                user_id=user.id,
-                symbol=strategy.symbol,
-                side=TradeSide.BUY,
-                price=0,
-                quantity=0,
-                leverage=1,
-                trade_type=TradeType.ERROR,
-                market_data=json.dumps({"error": error_message})
-            )
-            db.add(trade)
-            db.commit()
-            return
+    history_snapshot = build_strategy_history_snapshot(db, strategy)
+    history_context = format_strategy_history_context(history_snapshot)
+    effective_prompt_text = await maybe_optimize_strategy_prompt(db, strategy, user, history_snapshot)
 
-        current_price = market_data['current_price']
-        indicators = market_data['indicators']
+    indicators = (market_data or {}).get("indicators", {})
+    ohlcv = (market_data or {}).get("ohlcv", {})
+    closes = ohlcv.get("closes", [])[-10:]
+    timestamps = ohlcv.get("timestamps", [])[-10:]
+    price_data = [
+        {"timestamp": str(timestamp), "price": price}
+        for timestamp, price in zip(timestamps, closes)
+    ]
 
-        # 获取历史价格
-        price_history = (
-            db.query(MarketPrice)
-            .filter(MarketPrice.symbol == strategy.symbol)
-            .order_by(MarketPrice.timestamp.desc())
-            .limit(50)
-            .all()
-        )
+    total_position_value = sum((position.margin or 0) + (position.unrealized_pnl or 0) for position in positions)
+    total_assets = user.balance + total_position_value
+    roi = ((total_assets - user.initial_balance) / user.initial_balance * 100) if user.initial_balance else 0.0
 
-        # 获取用户在该交易对的持仓
-        positions = (
-            db.query(Position)
-            .filter(
-                Position.user_id == strategy.user_id,
-                Position.symbol == strategy.symbol,
-                Position.is_open == True
-            )
-            .all()
-        )
+    market_analysis = f"""# {strategy.symbol} 市场分析
 
-        # 格式化数据
-        price_data = [
-            {"price": p.price, "timestamp": str(p.timestamp)}
-            for p in reversed(price_history)
-        ]
+## 技术指标
+{json.dumps(indicators, ensure_ascii=False, indent=2)}
 
-        position_data = [
-            {
-                "side": p.side.value,
-                "quantity": p.quantity,
-                "entry_price": p.entry_price,
-                "unrealized_pnl": p.unrealized_pnl
-            }
-            for p in positions
-        ]
+## 最近价格
+{format_price_history(price_data)}
 
-        # 计算总资产和收益率
-        all_positions = (
-            db.query(Position)
-            .filter(
-                Position.user_id == strategy.user_id,
-                Position.is_open == True
-            )
-            .all()
-        )
-        total_position_value = sum(p.margin + p.unrealized_pnl for p in all_positions)
-        total_assets = user.balance + total_position_value
-        roi = ((total_assets - user.initial_balance) / user.initial_balance) * 100 if user.initial_balance > 0 else 0
-
-        # 构建市场分析信息（优化版本，充分利用市场数据）
-        market_analysis = f"""# {strategy.symbol} 市场分析报告
-
-## 当前市场状态
-- **当前价格**: ${current_price:,.2f}
-- **24h涨跌**: {indicators.get('price_change_pct', 0):.2f}%
-- **成交量变化**: {indicators.get('vol_ratio', 1):.2f}x (相对于平均成交量)
-
-## 技术指标分析
-### 移动平均线 (MA)
-- **MA5** (短期趋势): ${indicators.get('ma5', 0):,.2f}
-- **MA10** (中期趋势): ${indicators.get('ma10', 0):,.2f}
-- **MA30** (长期趋势): ${indicators.get('ma30', 0):,.2f}
-- **均线排列**: {"多头排列" if indicators.get('ma5', 0) > indicators.get('ma10', 0) > indicators.get('ma30', 0) else "空头排列" if indicators.get('ma5', 0) < indicators.get('ma10', 0) < indicators.get('ma30', 0) else "震荡"}
-
-### 相对强弱指标 (RSI)
-- **RSI**: {indicators.get('rsi', 50):.2f}
-- **市场状态**: {"超买区 (>70)" if indicators.get('rsi', 50) > 70 else "超卖区 (<30)" if indicators.get('rsi', 50) < 30 else "正常区间 (30-70)"}
-
-### MACD 指标
-- **MACD**: {indicators.get('macd', 0):.2f}
-- **信号线**: {indicators.get('macd_signal', 0):.2f}
-- **柱状图**: {indicators.get('macd_hist', 0):.2f}
-- **趋势信号**: {"金叉 (看涨)" if indicators.get('macd_hist', 0) > 0 else "死叉 (看跌)"}
-
-### 布林带 (Bollinger Bands)
-- **上轨**: ${indicators.get('bb_upper', 0):,.2f}
-- **中轨**: ${indicators.get('bb_middle', 0):,.2f}
-- **下轨**: ${indicators.get('bb_lower', 0):,.2f}
-- **位置**: {"接近上轨" if current_price > indicators.get('bb_middle', 0) else "接近下轨"}
-
-## 最近价格走势
-{format_price_history(price_data[-10:])}
-
-## 当前持仓情况
+## 当前持仓
 {format_positions(position_data)}
 
 ## 账户状态
-- **总资产**: ${total_assets:,.2f}
-- **收益率 (ROI)**: {roi:.2f}%
-- **初始资金**: ${user.initial_balance:,.2f}
-- **可用余额**: ${user.balance:,.2f}
-- **持仓价值**: ${total_position_value:,.2f}
-- **持仓数量**: {len(position_data)}
-- **最大可开仓**: ${user.balance * 10:,.2f} (最高10x杠杆，由AI决定)"""
+- 总资产: ${total_assets:,.2f}
+- 总收益率(ROI): {roi:.2f}%
+- 初始资金: ${user.initial_balance:,.2f}
+- 当前余额: ${user.balance:,.2f}
+- 持仓价值: ${total_position_value:,.2f}
+- 手续费率: {user.trading_fee_rate:.4%}
+- 爆仓阈值: {user.liquidation_threshold:.2%}
 
-        # 保存市场上下文
-        market_context = json.dumps({
+{history_context}"""
+
+    market_context = json.dumps(
+        {
             "price": current_price,
             "indicators": indicators,
             "positions": position_data,
             "balance": user.balance,
             "total_assets": total_assets,
             "roi": roi,
-            "initial_balance": user.initial_balance
-        })
+            "initial_balance": user.initial_balance,
+            "history_snapshot": history_snapshot,
+        },
+        ensure_ascii=False,
+    )
 
-        # 使用自定义提示词进行分析
-        messages = [
-            {
-                "role": "system",
-                "content": strategy.prompt_text
-            },
-            {
-                "role": "user",
-                "content": f"""{market_analysis}
+    messages = [
+        {"role": "system", "content": effective_prompt_text},
+        {
+            "role": "user",
+            "content": f"""{market_analysis}
 
-请基于上述完整的市场数据进行深入分析，并给出精准的交易建议。
+请基于以上市场上下文做出本轮交易决策。
 
-**要求**:
-1. 综合考虑所有技术指标（MA、RSI、MACD、布林带）
-2. 分析当前市场趋势和动量
-3. 评估风险收益比
-4. 给出具体的交易参数
-5. 根据市场波动性和风险评估自行决定合适的杠杆倍数（1-20x）
+要求：
+1. 先考虑已有持仓的风险管理，再考虑是否新开仓
+2. 如果信号不足、收益空间不足或成本不划算，优先返回 hold
+3. 必须只输出 JSON，不要输出额外解释
 
-**返回JSON格式**:
+输出格式：
 {{
-    "action": "open/close/hold",
-    "direction": "long/short",
-    "quantity": 0.01,
-    "leverage": 3,
-    "reasoning": "详细的决策理由，包括技术分析依据和杠杆选择理由"
+  "action": "open/close/hold",
+  "direction": "long/short",
+  "quantity": 0.01,
+  "leverage": 3,
+  "reasoning": "简要说明"
 }}
 
-**重要**: quantity 必须大于 0！请根据可用余额和当前价格计算合理的开仓数量。
-计算公式参考: quantity = (可用余额 * 仓位比例 * 杠杆) / 当前价格
-例如余额 10000 USDT，使用 10% 仓位，3x 杠杆，BTC 价格 100000: quantity = (10000 * 0.1 * 3) / 100000 = 0.03"""
-            }
-        ]
+quantity 必须大于 0。
+示例：若账户 10000 USDT，使用 10% 仓位和 3x 杠杆，BTC 价格 100000，则 quantity = (10000 * 0.1 * 3) / 100000 = 0.03""",
+        },
+    ]
 
-        # 调用 AI（需要用户的 API 配置）
-        if not user.ai_api_key:
-            error_message = f"用户 {user.username} 未配置 API Key"
-            logger.error(error_message)
-            # 记录错误
-            trade = Trade(
+    raw_content = ""
+    reasoning = ""
+    decision_text = "ERROR"
+    action_taken = False
+
+    try:
+        result = await ai_service.chat_completion(
+            messages=messages,
+            api_key=user.ai_api_key,
+            base_url=user.ai_base_url or "",
+            model=user.ai_model or "claude-4.5-opus",
+            temperature=0.7,
+            max_tokens=1000,
+        )
+        raw_content = result["choices"][0]["message"]["content"]
+        payload = json.loads(extract_json_from_content(raw_content))
+        action = (payload.get("action") or "hold").lower()
+        decision_text = action.upper()
+        reasoning = payload.get("reasoning") or ""
+
+        if action == "open":
+            action_taken = await execute_open_position(db, user, strategy, payload, current_price, market_data or {})
+        elif action == "close":
+            action_taken = await execute_close_positions(db, user, strategy, positions, current_price, market_data or {})
+        else:
+            hold_trade = Trade(
                 user_id=user.id,
                 symbol=strategy.symbol,
                 side=TradeSide.BUY,
                 price=current_price,
                 quantity=0,
-                leverage=1,
-                trade_type=TradeType.ERROR,
-                market_data=json.dumps({
-                    "error": error_message,
-                    "price": current_price,
-                    "indicators": indicators
-                })
+                leverage=max(int(payload.get("leverage") or 1), 1),
+                execution_source="AI",
+                trade_type=TradeType.HOLD,
+                market_data=json.dumps(
+                    {
+                        "decision": "HOLD",
+                        "reasoning": reasoning,
+                        "price": current_price,
+                        "indicators": indicators,
+                    },
+                    ensure_ascii=False,
+                ),
             )
-            db.add(trade)
+            db.add(hold_trade)
             db.commit()
-            return
-
-        try:
-            result = await ai_service.chat_completion(
-                messages=messages,
-                api_key=user.ai_api_key,
-                base_url=user.ai_base_url or "",
-                model=user.ai_model or "claude-4.5-opus",
-                temperature=0.7,
-                max_tokens=1000
-            )
-        except AIAPIError as api_err:
-            error_message = str(api_err)
-            logger.error(f"策略 {strategy.name} API调用失败: {error_message}")
-            trade = Trade(
-                user_id=user.id,
-                symbol=strategy.symbol,
-                side=TradeSide.BUY,
-                price=current_price,
-                quantity=0,
-                leverage=1,
-                trade_type=TradeType.ERROR,
-                market_data=json.dumps({
-                    "error": error_message,
+    except AIAPIError as exc:
+        raw_content = str(exc)
+        reasoning = raw_content
+        error_trade = Trade(
+            user_id=user.id,
+            symbol=strategy.symbol,
+            side=TradeSide.BUY,
+            price=current_price,
+            quantity=0,
+            leverage=1,
+            execution_source="AI",
+            trade_type=TradeType.ERROR,
+            market_data=json.dumps(
+                {
+                    "error": raw_content,
                     "error_type": "api_error",
-                    "status_code": api_err.status_code,
-                    "api_response": api_err.response_body,
+                    "status_code": exc.status_code,
+                    "api_response": exc.response_body,
                     "price": current_price,
-                    "indicators": indicators
-                }, ensure_ascii=False)
-            )
-            db.add(trade)
-            decision_log = AIDecisionLog(
+                    "indicators": indicators,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        db.add(error_trade)
+        db.commit()
+    except Exception as exc:
+        raw_content = str(exc)
+        reasoning = raw_content
+        error_trade = Trade(
+            user_id=user.id,
+            symbol=strategy.symbol,
+            side=TradeSide.BUY,
+            price=current_price,
+            quantity=0,
+            leverage=1,
+            execution_source="AI",
+            trade_type=TradeType.ERROR,
+            market_data=json.dumps(
+                {
+                    "error": raw_content,
+                    "error_type": "executor_error",
+                    "price": current_price,
+                    "indicators": indicators,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        db.add(error_trade)
+        db.commit()
+    finally:
+        db.add(
+            AIDecisionLog(
                 user_id=user.id,
                 prompt_name=strategy.name,
                 market_context=market_context,
-                ai_reasoning=error_message,
-                decision="ERROR",
-                action_taken=False
+                ai_reasoning=reasoning or raw_content,
+                decision=decision_text,
+                action_taken=action_taken,
             )
-            db.add(decision_log)
-            strategy.last_executed_at = get_local_time()
-            db.commit()
-            return
-
-        content = result["choices"][0]["message"]["content"]
-
-        # 解析 AI 响应
-        try:
-            decision = json.loads(extract_json_from_content(content))
-            ai_reasoning = decision.get("reasoning", "")
-            decision_action = decision.get("action", "hold").upper()
-
-            logger.debug(f"策略 {strategy.name} AI 决策: {decision}")
-
-            # 执行交易决策（传递市场数据用于记录）
-            action = decision.get("action", "hold").lower()
-
-            if action == "open":
-                # 开仓
-                success = await execute_open_position(db, user, strategy, decision, current_price, market_data)
-                action_taken = success
-            elif action == "close":
-                # 平仓
-                success = await execute_close_positions(db, user, strategy, positions, current_price, market_data)
-                action_taken = success
-            elif action == "hold":
-                logger.debug(f"策略 {strategy.name} 决策: 持有，不操作")
-                trade = Trade(
-                    user_id=user.id,
-                    symbol=strategy.symbol,
-                    side=TradeSide.BUY,
-                    price=current_price,
-                    quantity=0,
-                    leverage=1,
-                    trade_type=TradeType.HOLD,
-                    market_data=json.dumps({
-                        "decision": "HOLD",
-                        "reasoning": ai_reasoning,
-                        "price": current_price,
-                        "indicators": indicators
-                    })
-                )
-                db.add(trade)
-            else:
-                error_message = f"未知操作: {action}"
-                logger.warning(f"策略 {strategy.name} {error_message}")
-                # 记录错误
-                trade = Trade(
-                    user_id=user.id,
-                    symbol=strategy.symbol,
-                    side=TradeSide.BUY,
-                    price=current_price,
-                    quantity=0,
-                    leverage=1,
-                    trade_type=TradeType.ERROR,
-                    market_data=json.dumps({
-                        "error": error_message,
-                        "price": current_price,
-                        "indicators": indicators
-                    })
-                )
-                db.add(trade)
-
-        except json.JSONDecodeError as e:
-            error_message = f"AI响应无法解析为JSON: {content}"
-            logger.warning(f"策略 {strategy.name} {error_message}")
-            ai_reasoning = content
-            decision_action = "ERROR"
-
-            # 记录解析错误到交易历史
-            trade = Trade(
-                user_id=user.id,
-                symbol=strategy.symbol,
-                side=TradeSide.BUY,
-                price=current_price,
-                quantity=0,
-                leverage=1,
-                trade_type=TradeType.ERROR,
-                market_data=json.dumps({
-                    "error": error_message,
-                    "ai_response": content,
-                    "price": current_price,
-                    "indicators": indicators
-                })
-            )
-            db.add(trade)
-
-        # 记录AI决策日志
-        decision_log = AIDecisionLog(
-            user_id=user.id,
-            prompt_name=strategy.name,
-            market_context=market_context,
-            ai_reasoning=ai_reasoning,
-            decision=decision_action,
-            action_taken=action_taken
         )
-        db.add(decision_log)
-
-        # 更新最后执行时间
         strategy.last_executed_at = get_local_time()
         db.commit()
 
-    except Exception as e:
-        exc_type = type(e).__name__
-        exc_detail = str(e).strip()
-        error_message = f"执行策略失败: [{exc_type}] {exc_detail}" if exc_detail else f"执行策略失败: [{exc_type}]"
-        logger.error(
-            f"策略 {strategy.name if strategy else 'Unknown'} {error_message}\n"
-            f"  错误类型: {exc_type}\n"
-            f"  策略ID: {strategy.id if strategy else 'N/A'}\n"
-            f"  用户ID: {strategy.user_id if strategy else 'N/A'}",
-            exc_info=True
-        )
 
-        db.rollback()
+async def execute_open_position(
+    db: Session,
+    user: User,
+    strategy: PromptConfig,
+    decision: dict,
+    current_price: float,
+    market_data: dict | None = None,
+) -> bool:
+    direction = (decision.get("direction") or "long").lower()
+    quantity = float(decision.get("quantity") or 0)
+    leverage = max(int(decision.get("leverage") or 1), 1)
+    if quantity <= 0:
+        return False
 
-        # 记录异常到交易历史和决策日志
-        try:
-            if user and strategy:
-                trade = Trade(
-                    user_id=user.id,
-                    symbol=strategy.symbol,
-                    side=TradeSide.BUY,
-                    price=current_price,
-                    quantity=0,
-                    leverage=1,
-                    trade_type=TradeType.ERROR,
-                    market_data=json.dumps({
-                        "error": error_message,
-                        "exception_type": exc_type,
-                        "exception": exc_detail
-                    })
-                )
-                db.add(trade)
+    position_side = TradeSide.LONG if direction == "long" else TradeSide.SHORT
+    notional_value = calculate_notional_value(current_price, quantity)
+    fee_paid = calculate_fee(current_price, quantity, user.trading_fee_rate)
+    margin = notional_value / leverage
+    total_cost = margin + fee_paid
+    if user.balance < total_cost:
+        return False
 
-                decision_log = AIDecisionLog(
-                    user_id=user.id,
-                    prompt_name=strategy.name,
-                    market_context=market_context or "{}",
-                    ai_reasoning=error_message,
-                    decision="ERROR",
-                    action_taken=False
-                )
-                db.add(decision_log)
+    balance_before = user.balance
+    user.balance -= total_cost
+    user.updated_at = get_local_time()
+    liquidation_price = calculate_liquidation_price(
+        current_price,
+        leverage,
+        position_side,
+        user.liquidation_threshold,
+    )
 
-                # 更新最后执行时间（避免错误时反复重试）
-                strategy.last_executed_at = get_local_time()
+    position = Position(
+        user_id=user.id,
+        symbol=strategy.symbol,
+        side=position_side,
+        entry_price=current_price,
+        quantity=quantity,
+        leverage=leverage,
+        margin=margin,
+        liquidation_price=liquidation_price,
+    )
+    db.add(position)
+    db.flush()
 
-                db.commit()
-        except Exception as e:
-            logger.error(f"策略 {strategy.name if strategy else 'unknown'} 异常记录入库失败: {e}")
-            db.rollback()
-
-
-def strip_json_comments(json_str: str) -> str:
-    """
-    移除 JSON 中的 // 单行注释和 /* */ 块注释，正确跳过字符串内部的 //
-    """
-    result = []
-    i = 0
-    in_string = False
-    escaped = False
-
-    while i < len(json_str):
-        char = json_str[i]
-
-        if escaped:
-            result.append(char)
-            escaped = False
-            i += 1
-            continue
-
-        if char == '\\' and in_string:
-            result.append(char)
-            escaped = True
-            i += 1
-            continue
-
-        if char == '"':
-            in_string = not in_string
-            result.append(char)
-            i += 1
-            continue
-
-        if not in_string:
-            # // 单行注释：跳到行尾
-            if char == '/' and i + 1 < len(json_str) and json_str[i + 1] == '/':
-                while i < len(json_str) and json_str[i] != '\n':
-                    i += 1
-                continue
-            # /* */ 块注释
-            if char == '/' and i + 1 < len(json_str) and json_str[i + 1] == '*':
-                i += 2
-                while i < len(json_str) - 1:
-                    if json_str[i] == '*' and json_str[i + 1] == '/':
-                        i += 2
-                        break
-                    i += 1
-                continue
-
-        result.append(char)
-        i += 1
-
-    return ''.join(result)
+    trade = Trade(
+        user_id=user.id,
+        position_id=position.id,
+        symbol=strategy.symbol,
+        side=TradeSide.BUY if position_side == TradeSide.LONG else TradeSide.SELL,
+        position_side=position_side,
+        price=current_price,
+        quantity=quantity,
+        leverage=leverage,
+        margin_used=margin,
+        notional_value=notional_value,
+        fee_paid=fee_paid,
+        balance_before=balance_before,
+        balance_after=user.balance,
+        roi_pct=calculate_roi_pct(0.0, margin),
+        entry_price_snapshot=current_price,
+        liquidation_price_snapshot=liquidation_price,
+        close_reason="AI_OPEN",
+        execution_source="AI",
+        trade_type=TradeType.OPEN,
+        market_data=json.dumps(
+            {
+                "reasoning": decision.get("reasoning") or "",
+                "fee_rate": user.trading_fee_rate,
+                "estimated_total_cost": round(total_cost, 8),
+                "indicators": (market_data or {}).get("indicators", {}),
+            },
+            ensure_ascii=False,
+        ),
+    )
+    db.add(trade)
+    db.commit()
+    return True
 
 
-def extract_json_from_content(content: str) -> str:
-    """从 AI 响应中提取 JSON，支持 markdown 代码块包裹以及 // /* */ 注释"""
-    # 尝试提取 ```json ... ``` 或 ``` ... ``` 块
-    match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
-    if match:
-        return strip_json_comments(match.group(1))
-    # 尝试直接找第一个 { ... } 块
-    match = re.search(r'\{.*\}', content, re.DOTALL)
-    if match:
-        return strip_json_comments(match.group(0))
-    return content
-
-
-def format_price_history(history: list) -> str:
-    """格式化价格历史"""
-    if not history:
-        return "无历史数据"
-
-    lines = []
-    for item in history:
-        price = item.get('price', 0)
-        timestamp = item.get('timestamp', '')
-        lines.append(f"  {timestamp}: ${price:,.2f}")
-
-    return "\n".join(lines)
-
-
-def format_positions(positions: list) -> str:
-    """格式化持仓信息"""
+async def execute_close_positions(
+    db: Session,
+    user: User,
+    strategy: PromptConfig,
+    positions: list,
+    current_price: float,
+    market_data: dict | None = None,
+) -> bool:
     if not positions:
-        return "无持仓"
-
-    lines = []
-    for pos in positions:
-        side = pos.get('side', '')
-        quantity = pos.get('quantity', 0)
-        entry_price = pos.get('entry_price', 0)
-        pnl = pos.get('unrealized_pnl', 0)
-        lines.append(
-            f"  {side} {quantity} @ ${entry_price:,.2f} (盈亏: ${pnl:,.2f})"
-        )
-
-    return "\n".join(lines)
-
-
-async def execute_open_position(db: Session, user: User, strategy: PromptConfig, decision: dict, current_price: float, market_data: dict = None) -> bool:
-    """
-    执行开仓操作
-
-    Args:
-        db: 数据库会话
-        user: 用户对象
-        strategy: 策略对象
-        decision: AI决策
-        current_price: 当前价格
-        market_data: 市场数据快照
-
-    Returns:
-        是否开仓成功
-    """
-    import json
-
-    try:
-        direction = decision.get("direction", "long").lower()
-        quantity = float(decision.get("quantity", 0))
-        leverage = int(decision.get("leverage", 3))
-        reasoning = decision.get("reasoning", "")
-
-        # 如果 AI 返回的数量为 0 或负数，根据余额自动计算合理数量
-        if quantity <= 0:
-            # 默认使用 10% 的余额开仓
-            leverage = max(leverage, 1)
-            quantity = (user.balance * 0.1 * leverage) / current_price if current_price > 0 else 0.001
-            quantity = round(quantity, 6)
-            logger.debug(f"策略 {strategy.name}: AI 返回数量为 0，自动计算数量为 {quantity}")
-
-        # 确保最小数量
-        if quantity < 0.00001:
-            quantity = 0.00001
-
-        # 转换方向
-        side = TradeSide.LONG if direction == "long" else TradeSide.SHORT
-
-        # 计算保证金
-        notional_value = calculate_notional_value(current_price, quantity)
-        fee_paid = calculate_fee(current_price, quantity)
-        margin = notional_value / leverage
-
-        # 检查余额是否足够
-<<<<<<< HEAD
-        if user.balance < margin + fee_paid:
-            error_msg = f"余额不足 (需要 ${margin + fee_paid:.2f}, 可用 ${user.balance:.2f})"
-            logger.warning(f"策略 {strategy.name} 开仓失败: {error_msg}")
-=======
-        if user.balance < margin:
-            error_msg = f"余额不足 (需要 ${margin:.2f}, 可用 ${user.balance:.2f})"
-            logger.error(f"策略 {strategy.name} 开仓失败: {error_msg}")
->>>>>>> b555eed3e2ff0624971369bd2b2dc373eed5285e
-
-            # 记录失败到交易历史
-            market_data_json = json.dumps({
-                'error': error_msg,
-                'price': current_price,
-                'indicators': market_data.get('indicators', {}) if market_data else {},
-                'decision': decision
-            })
-
-            trade = Trade(
-                user_id=user.id,
-                symbol=strategy.symbol,
-                side=TradeSide.BUY if side == TradeSide.LONG else TradeSide.SELL,
-                price=current_price,
-                quantity=quantity,
-                leverage=leverage,
-                trade_type=TradeType.OPEN,
-                market_data=market_data_json
-            )
-            db.add(trade)
-            db.commit()
-            return False
-
-        # 扣除保证金
-        balance_before = user.balance
-        user.balance -= margin + fee_paid
-        user.updated_at = get_local_time()
-
-        # 创建持仓
-        new_position = Position(
-            user_id=user.id,
-            symbol=strategy.symbol,
-            side=side,
-            entry_price=current_price,
-            quantity=quantity,
-            leverage=leverage,
-            margin=margin,
-            liquidation_price=calculate_liquidation_price(current_price, leverage, side),
-        )
-        db.add(new_position)
-        db.flush()
-
-        # 创建交易记录时，保存完整市场数据
-        market_data_json = json.dumps({
-            'price': current_price,
-            'indicators': market_data.get('indicators', {}) if market_data else {},
-            'timestamp': market_data.get('timestamp') if market_data else str(get_local_time()),
-            'decision': decision,
-            'reasoning': reasoning
-        })
-
-        # 记录交易历史
         trade = Trade(
             user_id=user.id,
-            position_id=new_position.id,
             symbol=strategy.symbol,
-            side=TradeSide.BUY if side == TradeSide.LONG else TradeSide.SELL,
-            position_side=side,
+            side=TradeSide.BUY,
             price=current_price,
-            quantity=quantity,
-            leverage=leverage,
-            margin_used=margin,
+            quantity=0,
+            leverage=1,
+            execution_source="AI",
+            trade_type=TradeType.HOLD,
+            market_data=json.dumps(
+                {
+                    "decision": "HOLD",
+                    "reasoning": "无有效决策，已忽略本次执行",
+                    "price": current_price,
+                    "indicators": (market_data or {}).get("indicators", {}),
+                },
+                ensure_ascii=False,
+            ),
+        )
+        db.add(trade)
+        db.commit()
+        return False
+
+    for position in positions:
+        if position.side == TradeSide.LONG:
+            pnl = (current_price - position.entry_price) * position.quantity
+        else:
+            pnl = (position.entry_price - current_price) * position.quantity
+
+        notional_value = calculate_notional_value(current_price, position.quantity)
+        fee_paid = calculate_fee(current_price, position.quantity, user.trading_fee_rate)
+        balance_before = user.balance
+        closed_at = get_local_time()
+
+        user.balance += position.margin + pnl - fee_paid
+        user.updated_at = closed_at
+        position.is_open = False
+        position.closed_at = closed_at
+        position.unrealized_pnl = pnl
+
+        trade = Trade(
+            user_id=user.id,
+            position_id=position.id,
+            symbol=position.symbol,
+            side=TradeSide.SELL if position.side == TradeSide.LONG else TradeSide.BUY,
+            position_side=position.side,
+            price=current_price,
+            quantity=position.quantity,
+            leverage=position.leverage,
+            margin_used=position.margin,
             notional_value=notional_value,
+            pnl=pnl,
             fee_paid=fee_paid,
             balance_before=balance_before,
             balance_after=user.balance,
-            roi_pct=calculate_roi_pct(0.0, margin),
-            entry_price_snapshot=current_price,
-            liquidation_price_snapshot=new_position.liquidation_price,
-            close_reason="STRATEGY_OPEN",
+            roi_pct=calculate_roi_pct(pnl, position.margin),
+            holding_seconds=calculate_holding_seconds(position.created_at, closed_at),
+            entry_price_snapshot=position.entry_price,
+            liquidation_price_snapshot=position.liquidation_price,
+            close_reason="AI_CLOSE",
             execution_source="AI",
-            trade_type=TradeType.OPEN,
-            market_data=market_data_json
+            trade_type=TradeType.CLOSE,
+            market_data=json.dumps(
+                {
+                    "exit_price": round(current_price, 8),
+                    "fee_rate": user.trading_fee_rate,
+                    "close_reason": "AI_CLOSE",
+                    "indicators": (market_data or {}).get("indicators", {}),
+                },
+                ensure_ascii=False,
+            ),
         )
         db.add(trade)
 
-        db.commit()
+    db.commit()
+    return True
 
-        logger.info(
-            f"策略 {strategy.name} 开仓成功: {side.value} {quantity} {strategy.symbol} @ ${current_price:.2f} {leverage}x | 理由: {reasoning[:100]}"
-        )
-        return True
-
-    except Exception as e:
-        error_msg = f"开仓异常: {str(e)}"
-        logger.error(
-            f"策略 {strategy.name} {error_msg}\n"
-            f"  错误类型: {type(e).__name__}\n"
-            f"  决策: {decision}",
-            exc_info=True
-        )
-
-        # 记录异常到交易历史
-        try:
-            market_data_json = json.dumps({
-                'error': error_msg,
-                'exception': str(e),
-                'price': current_price,
-                'decision': decision
-            })
-
-            trade = Trade(
-                user_id=user.id,
-                symbol=strategy.symbol,
-                side=TradeSide.BUY,
-                price=current_price,
-                quantity=0,
-                leverage=1,
-                trade_type=TradeType.OPEN,
-                market_data=market_data_json
-            )
-            db.add(trade)
-            db.commit()
-        except Exception as e:
-            logger.error(f"策略 {strategy.name} 开仓失败记录入库失败: {e}")
-            db.rollback()
-
-        db.rollback()
-        return False
-
-
-async def execute_close_positions(db: Session, user: User, strategy: PromptConfig, positions: list, current_price: float, market_data: dict = None) -> bool:
-    """
-    执行平仓操作
-
-    Args:
-        db: 数据库会话
-        user: 用户对象
-        strategy: 策略对象
-        positions: 持仓列表
-        current_price: 当前价格
-        market_data: 市场数据快照
-
-    Returns:
-        是否平仓成功
-    """
-    import json
-
-    try:
-        if not positions:
-            logger.debug(f"策略 {strategy.name} 无持仓可平")
-            # 记录无持仓到交易历史
-            market_data_json = json.dumps({
-                'info': '无持仓可平',
-                'price': current_price,
-                'indicators': market_data.get('indicators', {}) if market_data else {}
-            })
-
-            trade = Trade(
-                user_id=user.id,
-                symbol=strategy.symbol,
-                side=TradeSide.SELL,
-                price=current_price,
-                quantity=0,
-                leverage=1,
-                trade_type=TradeType.CLOSE,
-                market_data=market_data_json
-            )
-            db.add(trade)
-            db.commit()
-            return False
-
-        total_pnl = 0
-
-        for position in positions:
-            # 计算盈亏（保证金 = 开仓价*数量/杠杆，杠杆效果已在保证金中体现，不重复乘）
-            if position.side == TradeSide.LONG:
-                pnl = (current_price - position.entry_price) * position.quantity
-            else:
-                pnl = (position.entry_price - current_price) * position.quantity
-
-            notional_value = calculate_notional_value(current_price, position.quantity)
-            fee_paid = calculate_fee(current_price, position.quantity)
-            balance_before = user.balance
-
-            # 退还保证金 + 盈亏
-            user.balance += position.margin + pnl - fee_paid
-            user.updated_at = get_local_time()
-
-            # 更新持仓状态
-            position.is_open = False
-            position.closed_at = get_local_time()
-            position.unrealized_pnl = pnl
-
-            # 创建交易记录时，保存完整市场数据
-            market_data_json = json.dumps({
-                'price': current_price,
-                'indicators': market_data.get('indicators', {}) if market_data else {},
-                'timestamp': market_data.get('timestamp') if market_data else str(get_local_time()),
-                'position': {
-                    'side': position.side.value,
-                    'entry_price': position.entry_price,
-                    'quantity': position.quantity,
-                    'leverage': position.leverage
-                },
-                'pnl': pnl
-            })
-
-            # 记录交易历史
-            trade = Trade(
-                user_id=user.id,
-                position_id=position.id,
-                symbol=strategy.symbol,
-                side=TradeSide.SELL if position.side == TradeSide.LONG else TradeSide.BUY,
-                position_side=position.side,
-                price=current_price,
-                quantity=position.quantity,
-                leverage=position.leverage,
-                margin_used=position.margin,
-                notional_value=notional_value,
-                pnl=pnl,
-                fee_paid=fee_paid,
-                balance_before=balance_before,
-                balance_after=user.balance,
-                roi_pct=calculate_roi_pct(pnl, position.margin),
-                holding_seconds=calculate_holding_seconds(position.created_at, position.closed_at),
-                entry_price_snapshot=position.entry_price,
-                liquidation_price_snapshot=position.liquidation_price,
-                close_reason="STRATEGY_CLOSE",
-                execution_source="AI",
-                trade_type=TradeType.CLOSE,
-                market_data=market_data_json
-            )
-            db.add(trade)
-
-            total_pnl += pnl
-
-            logger.info(
-                f"策略 {strategy.name} 平仓: {position.side.value} {position.quantity} {strategy.symbol} @ ${current_price:.2f} 盈亏 ${pnl:.2f}"
-            )
-
-        db.commit()
-
-        logger.info(f"策略 {strategy.name} 平仓完成，总盈亏: ${total_pnl:.2f}")
-        return True
-
-    except Exception as e:
-        error_msg = f"平仓异常: {str(e)}"
-        logger.error(
-            f"策略 {strategy.name} {error_msg}\n"
-            f"  错误类型: {type(e).__name__}\n"
-            f"  决策: {decision}",
-            exc_info=True
-        )
-
-        # 记录异常到交易历史
-        try:
-            market_data_json = json.dumps({
-                'error': error_msg,
-                'exception': str(e),
-                'price': current_price
-            })
-
-            trade = Trade(
-                user_id=user.id,
-                symbol=strategy.symbol,
-                side=TradeSide.SELL,
-                price=current_price,
-                quantity=0,
-                leverage=1,
-                trade_type=TradeType.CLOSE,
-                market_data=market_data_json
-            )
-            db.add(trade)
-            db.commit()
-        except Exception as e:
-            logger.error(f"策略 {strategy.name} 平仓失败记录入库失败: {e}")
-            db.rollback()
-
-        db.rollback()
-        return False
 

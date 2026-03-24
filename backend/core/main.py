@@ -30,6 +30,8 @@ from backend.core.trade_utils import (
     get_risk_level,
 )
 from backend.core.models import (
+    DEFAULT_INITIAL_BALANCE,
+    DEFAULT_TRADING_FEE_RATE,
     User,
     Position,
     Trade,
@@ -44,6 +46,8 @@ from backend.core.models import (
 from backend.engine.engine import trading_engine
 from backend.core.config import settings
 from backend.core.trading_pairs import DEFAULT_SYMBOL, MARKET_OVERVIEW_SYMBOLS
+from backend.utils.init_prompts import DEFAULT_PROMPTS
+from backend.services.prompt_revision_service import record_prompt_revision
 
 # 配置日志
 logging.basicConfig(
@@ -100,6 +104,8 @@ class UserResponse(BaseModel):
     username: str
     balance: float
     initial_balance: float
+    trading_fee_rate: float
+    liquidation_threshold: float
     created_at: datetime
 
     class Config:
@@ -297,12 +303,16 @@ def calculate_distance_to_liquidation_pct(
     return round(distance * 100, 4)
 
 
-def calculate_break_even_price(position: Position, current_price: float) -> float | None:
+def calculate_break_even_price(
+    position: Position,
+    current_price: float,
+    fee_rate: float,
+) -> float | None:
     if not position.quantity or not position.leverage:
         return None
 
-    open_fee = calculate_fee(position.entry_price, position.quantity)
-    close_fee = calculate_fee(current_price, position.quantity)
+    open_fee = calculate_fee(position.entry_price, position.quantity, fee_rate)
+    close_fee = calculate_fee(current_price, position.quantity, fee_rate)
     price_delta = (open_fee + close_fee) / (position.quantity * position.leverage)
 
     if position.side == TradeSide.LONG:
@@ -352,7 +362,9 @@ def get_position_risk_level(
 
 
 def build_position_summary(
-    position: Position, current_price: float | None = None
+    position: Position,
+    current_price: float | None = None,
+    fee_rate: float = DEFAULT_TRADING_FEE_RATE,
 ) -> PositionSummaryResponse:
     latest_price = current_price
     if latest_price is None:
@@ -369,7 +381,7 @@ def build_position_summary(
     notional_value = calculate_notional_value(latest_price, position.quantity)
     roi_pct = calculate_roi_pct(unrealized_pnl, position.margin)
     price_change_pct = calculate_price_change_pct(position.entry_price, latest_price)
-    estimated_fee_to_close = calculate_fee(latest_price, position.quantity)
+    estimated_fee_to_close = calculate_fee(latest_price, position.quantity, fee_rate)
     holding_seconds = calculate_holding_seconds(position.created_at, get_local_time())
     distance_to_liquidation_pct = calculate_distance_to_liquidation_pct(
         position, latest_price
@@ -399,6 +411,69 @@ def build_position_summary(
         is_open=position.is_open,
         created_at=position.created_at,
     )
+
+
+def close_position_record(
+    db: Session,
+    user: User,
+    position: Position,
+    current_price: float,
+    close_reason: str = "MANUAL_CLOSE",
+    execution_source: str = "MANUAL",
+) -> tuple[float, float]:
+    """关闭持仓并写入交易记录。"""
+    pnl = calculate_position_pnl(position, current_price)
+    notional_value = calculate_notional_value(current_price, position.quantity)
+    fee_paid = calculate_fee(current_price, position.quantity, user.trading_fee_rate)
+    balance_before = user.balance
+    closed_at = get_local_time()
+
+    user.balance += position.margin + pnl - fee_paid
+    user.updated_at = closed_at
+
+    position.is_open = False
+    position.closed_at = closed_at
+    position.unrealized_pnl = pnl
+
+    trade = Trade(
+        user_id=user.id,
+        position_id=position.id,
+        symbol=position.symbol,
+        side=TradeSide.SELL if position.side == TradeSide.LONG else TradeSide.BUY,
+        position_side=position.side,
+        price=current_price,
+        quantity=position.quantity,
+        leverage=position.leverage,
+        margin_used=position.margin,
+        notional_value=notional_value,
+        pnl=pnl,
+        fee_paid=fee_paid,
+        balance_before=balance_before,
+        balance_after=user.balance,
+        roi_pct=calculate_roi_pct(pnl, position.margin),
+        holding_seconds=calculate_holding_seconds(position.created_at, closed_at),
+        entry_price_snapshot=position.entry_price,
+        liquidation_price_snapshot=position.liquidation_price,
+        close_reason=close_reason,
+        execution_source=execution_source,
+        trade_type=TradeType.CLOSE,
+        market_data=json.dumps(
+            {
+                "price": current_price,
+                "position": {
+                    "symbol": position.symbol,
+                    "side": position.side.value,
+                    "entry_price": position.entry_price,
+                    "quantity": position.quantity,
+                    "leverage": position.leverage,
+                },
+                "pnl": pnl,
+            }
+        ),
+    )
+    db.add(trade)
+
+    return pnl, fee_paid
 
 
 def serialize_trade_response(trade: Trade) -> TradeResponse:
@@ -435,39 +510,6 @@ def serialize_trade_response(trade: Trade) -> TradeResponse:
         error_message=error_message,
         trade_type=trade.trade_type,
         created_at=trade.created_at,
-    )
-    notional_value = calculate_notional_value(latest_price, position.quantity)
-    roi_pct = calculate_roi_pct(unrealized_pnl, position.margin)
-    price_change_pct = calculate_price_change_pct(position.entry_price, latest_price)
-    estimated_fee_to_close = calculate_fee(latest_price, position.quantity)
-    holding_seconds = calculate_holding_seconds(position.created_at, get_local_time())
-    distance_to_liquidation_pct = calculate_distance_to_liquidation_pct(
-        position, latest_price
-    )
-    risk_level = get_position_risk_level(
-        position.leverage, distance_to_liquidation_pct
-    )
-
-    return PositionSummaryResponse(
-        id=position.id,
-        symbol=position.symbol,
-        side=position.side,
-        entry_price=position.entry_price,
-        current_price=latest_price,
-        quantity=position.quantity,
-        leverage=position.leverage,
-        margin=position.margin,
-        unrealized_pnl=unrealized_pnl,
-        liquidation_price=position.liquidation_price,
-        notional_value=notional_value,
-        roi_pct=roi_pct,
-        price_change_pct=price_change_pct,
-        estimated_fee_to_close=estimated_fee_to_close,
-        distance_to_liquidation_pct=distance_to_liquidation_pct,
-        holding_seconds=holding_seconds,
-        risk_level=risk_level,
-        is_open=position.is_open,
-        created_at=position.created_at,
     )
 
 
@@ -660,13 +702,41 @@ def register_user(
     new_user = User(
         username=user_data.username,
         password=hash_password(user_data.password),
-        balance=settings.INITIAL_BALANCE,
-        initial_balance=settings.INITIAL_BALANCE,
+        balance=DEFAULT_INITIAL_BALANCE,
+        initial_balance=DEFAULT_INITIAL_BALANCE,
         ai_api_key=user_data.ai_api_key,
         ai_base_url=user_data.ai_base_url or "",
         ai_model=user_data.ai_model or "claude-4.5-opus",
     )
     db.add(new_user)
+    db.flush()
+
+    # 为新用户自动创建默认策略（基于第一个预设模板）
+    if DEFAULT_PROMPTS:
+        preset = DEFAULT_PROMPTS[0]
+        default_strategy = PromptConfig(
+            user_id=new_user.id,
+            name=preset["name"],
+            description=preset.get("description", ""),
+            prompt_text=preset["prompt_text"],
+            base_prompt_text=preset["prompt_text"],
+            symbol=DEFAULT_SYMBOL,
+            ai_model="claude-4.5-opus",
+            execution_interval=1,
+            is_active=False,
+        )
+        db.add(default_strategy)
+        db.flush()
+        record_prompt_revision(
+            db,
+            strategy=default_strategy,
+            source="CREATE",
+            summary="注册时自动创建默认策略",
+            prompt_text=default_strategy.prompt_text,
+            previous_prompt_text=None,
+            base_prompt_text=default_strategy.base_prompt_text,
+        )
+
     db.commit()
     db.refresh(new_user)
 
@@ -775,7 +845,13 @@ def get_user_positions(
         if position.symbol not in price_cache:
             latest_price = trading_engine.fetch_current_price(position.symbol)
             price_cache[position.symbol] = latest_price or position.entry_price
-        summaries.append(build_position_summary(position, price_cache[position.symbol]))
+        summaries.append(
+            build_position_summary(
+                position,
+                price_cache[position.symbol],
+                fee_rate=_current_user.trading_fee_rate,
+            )
+        )
     return summaries
 
 
@@ -792,12 +868,12 @@ def get_position_detail(
     if position.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="无权查看该持仓")
 
-    summary = build_position_summary(position)
+    summary = build_position_summary(position, fee_rate=current_user.trading_fee_rate)
     status_text = get_position_status_text(summary.unrealized_pnl)
 
     return PositionDetailResponse(
         **summary.model_dump(),
-        break_even_price=calculate_break_even_price(position, summary.current_price),
+        break_even_price=calculate_break_even_price(position, summary.current_price, current_user.trading_fee_rate),
         status_text=status_text,
         position_explanation=get_position_explanation(position.side),
         next_action_tip=get_position_next_action_tip(
@@ -827,7 +903,7 @@ def open_position(
 
     # 计算保证金 (保证金 = 仓位价值 / 杠杆)
     notional_value = calculate_notional_value(current_price, position_data.quantity)
-    fee_paid = calculate_fee(current_price, position_data.quantity)
+    fee_paid = calculate_fee(current_price, position_data.quantity, user.trading_fee_rate)
     margin = notional_value / position_data.leverage
     total_cost = margin + fee_paid
 
@@ -840,7 +916,10 @@ def open_position(
     user.balance -= total_cost
     user.updated_at = get_local_time()
     liquidation_price = calculate_liquidation_price(
-        current_price, position_data.leverage, position_data.side
+        current_price,
+        position_data.leverage,
+        position_data.side,
+        user.liquidation_threshold,
     )
 
     # 创建持仓
@@ -881,7 +960,7 @@ def open_position(
         market_data=(
             '{'
             f'"risk_level":"{get_risk_level(position_data.leverage)}",'
-            f'"fee_rate":{settings.TRADING_FEE_RATE},'
+            f'"fee_rate":{user.trading_fee_rate},'
             f'"estimated_total_cost":{round(total_cost, 8)}'
             '}'
         ),
@@ -923,7 +1002,7 @@ def close_position(position_id: int, db: Session = Depends(get_db)):
         pnl = (position.entry_price - current_price) * position.quantity
 
     notional_value = calculate_notional_value(current_price, position.quantity)
-    fee_paid = calculate_fee(current_price, position.quantity)
+    fee_paid = calculate_fee(current_price, position.quantity, user.trading_fee_rate)
     balance_before = user.balance
     closed_at = get_local_time()
 
@@ -959,7 +1038,7 @@ def close_position(position_id: int, db: Session = Depends(get_db)):
         market_data=(
             '{'
             f'"exit_price":{round(current_price, 8)},'
-            f'"fee_rate":{settings.TRADING_FEE_RATE},'
+            f'"fee_rate":{user.trading_fee_rate},'
             f'"close_reason":"{close_reason}"'
             '}'
         ),

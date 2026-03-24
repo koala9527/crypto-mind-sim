@@ -415,7 +415,11 @@ class TradingEngine:
                 loss_rate = abs(min(position.unrealized_pnl, 0)) / position.margin
 
                 # 亏损率超过阈值，触发爆仓
-                if loss_rate >= settings.LIQUIDATION_THRESHOLD:
+                user = db.query(User).filter(User.id == position.user_id).first()
+                if not user:
+                    continue
+
+                if loss_rate >= user.liquidation_threshold:
                     self._execute_liquidation(db, position)
                     liquidated_count += 1
 
@@ -425,6 +429,24 @@ class TradingEngine:
         except Exception as e:
             logger.error(f"爆仓检查失败: {e}")
             db.rollback()
+
+    def _deactivate_strategies_after_liquidation(self, db: Session, user_id: int, symbol: str) -> int:
+        """爆仓后自动停用同用户、同交易对的激活策略。"""
+        strategies = (
+            db.query(PromptConfig)
+            .filter(
+                PromptConfig.user_id == user_id,
+                PromptConfig.symbol == symbol,
+                PromptConfig.is_active.is_(True),
+            )
+            .all()
+        )
+
+        for strategy in strategies:
+            strategy.is_active = False
+            strategy.updated_at = get_local_time()
+
+        return len(strategies)
 
     def _execute_liquidation(self, db: Session, position: Position):
         """
@@ -476,10 +498,21 @@ class TradingEngine:
             # 更新用户余额（保证金已被扣除，无需操作）
             user.updated_at = get_local_time()
 
+            deactivated_count = self._deactivate_strategies_after_liquidation(
+                db=db,
+                user_id=user.id,
+                symbol=position.symbol,
+            )
+
             logger.warning(
                 f"用户 {user.username} 的持仓已爆仓: {position.symbol} "
                 f"{position.side.value} 亏损 {pnl:.2f} USDT"
             )
+            if deactivated_count > 0:
+                logger.warning(
+                    f"用户 {user.username} 的策略已因爆仓自动停用: "
+                    f"{position.symbol} × {deactivated_count}"
+                )
         except Exception as e:
             logger.error(f"执行爆仓失败: {e}")
 

@@ -37,7 +37,7 @@ CryptoMindSim 使用真实市场价格做模拟盘演示，帮助用户理解开
 
 ## 核心能力
 
-- 模拟交易：默认初始资金 `10,000 USDT`
+- 模拟交易：默认初始资金 `10,000 USDT`，并支持按用户单独配置手续费率、爆仓阈值与初始资金
 - 实时行情：通过 `CCXT` 获取市场价格
 - 多空与杠杆：支持做多、做空、杠杆展示与爆仓价计算
 - 持仓详情：展示 ROI、仓位价值、风险等级、保本价、爆仓距离
@@ -102,10 +102,7 @@ cp config/.env.example .env
 DATABASE_URL=sqlite:///./neotrade.db
 HOST=127.0.0.1
 PORT=8010
-INITIAL_BALANCE=10000.0
-LIQUIDATION_THRESHOLD=0.9
 PRICE_UPDATE_INTERVAL=60
-TRADING_FEE_RATE=0.0004
 EXCHANGE=binance
 TRADING_PAIR=BTC/USDT
 LEADERBOARD_TOP_N=10
@@ -195,3 +192,4 @@ uv run .\main.py
 ## License
 
 MIT
+

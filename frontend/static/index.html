@@ -404,7 +404,7 @@
                     📊 CryptoMindSim
                 </h1>
                 <p class="text-sm" style="color: var(--text-secondary);" data-i18n="subtitle">
-                    加密货币智能交易模拟平台 · 初始资金 10,000 USDT
+                    加密货币智能交易模拟平台 · 用户级交易规则配置
                 </p>
             </div>
             <!-- 右上角操作栏 -->
@@ -501,13 +501,36 @@
 
         <!-- 设置模态框 -->
         <div id="settingsModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div class="card rounded-lg p-6 max-w-md w-full mx-4">
+            <div class="card rounded-lg p-6 max-w-2xl w-full mx-4" style="max-height: 90vh; overflow-y: auto;">
                 <div class="flex justify-between items-center mb-6">
-                    <h2 class="text-xl font-bold">AI 配置</h2>
+                    <h2 class="text-xl font-bold">账号设置</h2>
                     <button onclick="hideSettingsModal()" class="text-2xl" style="color: var(--text-secondary)">&times;</button>
                 </div>
 
                 <div class="space-y-4">
+                    <div class="rounded-lg border p-4" style="border-color: var(--border-color); background: color-mix(in srgb, var(--bg-secondary) 72%, transparent);">
+                        <div class="text-sm font-semibold mb-3" style="color: var(--text-primary)">交易参数</div>
+                        <div class="grid md:grid-cols-3 gap-4">
+                            <div>
+                                <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">手续费率</label>
+                                <input type="number" id="tradingFeeRateInput" min="0" max="0.1" step="0.0001" value="0.0004" class="w-full input-field rounded px-4 py-2">
+                                <div class="text-xs mt-1" style="color: var(--text-secondary)">默认 `0.0004`，按成交额比例收取</div>
+                            </div>
+                            <div>
+                                <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">爆仓阈值</label>
+                                <input type="number" id="liquidationThresholdInput" min="0.01" max="1" step="0.01" value="0.9" class="w-full input-field rounded px-4 py-2">
+                                <div class="text-xs mt-1" style="color: var(--text-secondary)">默认 `0.9`，亏损率达到阈值时触发爆仓</div>
+                            </div>
+                            <div>
+                                <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">初始资金</label>
+                                <input type="number" id="initialBalanceInput" min="1" step="1000" value="10000" class="w-full input-field rounded px-4 py-2">
+                                <div class="text-xs mt-1" style="color: var(--text-secondary)">默认 `10000`，重置账户时恢复到该值</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="rounded-lg border p-4" style="border-color: var(--border-color); background: color-mix(in srgb, var(--bg-secondary) 72%, transparent);">
+                        <div class="text-sm font-semibold mb-3" style="color: var(--text-primary)">AI 配置</div>
                     <div>
                         <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">
                             🔑 API Key
@@ -518,12 +541,9 @@
                             placeholder="sk-xxxxxxxxxxxxxxxx"
                             class="w-full input-field rounded px-4 py-2"
                         >
-<<<<<<< HEAD
                         <div class="text-xs mt-1" style="color: var(--text-secondary)">
                             AI 配置将保存到当前账号下，便于不同账号分别管理
                         </div>
-=======
->>>>>>> b555eed3e2ff0624971369bd2b2dc373eed5285e
                     </div>
 
                     <div>
@@ -555,6 +575,7 @@
                         <div class="text-xs mt-1" style="color: var(--text-secondary)">
                             填写模型名称，例如 claude-4.5-opus、gpt-4o
                         </div>
+                    </div>
                     </div>
 
                     <div class="bg-yellow-500 bg-opacity-10 border border-yellow-500 border-opacity-30 rounded p-3">
@@ -688,7 +709,46 @@
                             class="w-full input-field rounded px-4 py-2"
                             style="resize: vertical; min-height: 150px;"
                         ></textarea>
-                        <div class="text-xs mt-1" style="color: var(--text-secondary)">定义AI的交易风格和决策逻辑</div>
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">定义AI的交易风格和决策逻辑；开启自动修正后会以这里的风格为基准微调</div>
+                    </div>
+
+                    <div class="rounded-lg border p-4" style="border-color: var(--border-color); background: color-mix(in srgb, var(--bg-secondary) 72%, transparent);">
+                        <div class="flex items-start justify-between gap-4">
+                            <div>
+                                <label class="block text-sm font-semibold" style="color: var(--text-primary)">AI 自动修正提示词</label>
+                                <div class="text-xs mt-1" style="color: var(--text-secondary)">根据历史交易记录自动微调提示词，但会尽量锁定当前策略风格，不把不同风格改成同一套模板</div>
+                            </div>
+                            <label class="flex items-center gap-2 cursor-pointer select-none" style="color: var(--text-secondary)">
+                                <input type="checkbox" id="strategyAutoOptimizePrompt" onchange="togglePromptOptimizationSettings()">
+                                <span>开启</span>
+                            </label>
+                        </div>
+
+                        <div id="strategyPromptOptimizationSettings" class="hidden mt-4 space-y-4">
+                            <div>
+                                <label class="block text-sm mb-2 font-semibold" style="color: var(--text-secondary)">每多少次决策修正一次</label>
+                                <input
+                                    type="number"
+                                    id="strategyPromptOptimizationInterval"
+                                    value="1"
+                                    min="1"
+                                    max="100"
+                                    class="w-full input-field rounded px-4 py-2"
+                                    placeholder="默认每轮修正"
+                                >
+                                <div class="text-xs mt-1" style="color: var(--text-secondary)">默认 1，表示每轮执行前都根据压缩后的历史做一次修正</div>
+                            </div>
+
+                            <div class="rounded-lg p-3" style="background: color-mix(in srgb, var(--bg-primary) 70%, transparent); border: 1px solid var(--border-color);">
+                                <label class="flex items-start gap-3 cursor-pointer select-none">
+                                    <input type="checkbox" id="strategyPromptOptimizationIncludeHold" checked>
+                                    <span>
+                                        <span class="block text-sm font-semibold" style="color: var(--text-primary)">HOLD 计入一次决策</span>
+                                        <span class="block text-xs mt-1" style="color: var(--text-secondary)">关闭后，只有开仓 / 平仓 / 异常会推动下一次提示词修正</span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- 按钮组 -->
@@ -776,7 +836,7 @@
                             <ul class="space-y-2 ml-8">
                                 <li>• 点击右上角"登录"按钮</li>
                                 <li>• 输入用户名和密码（首次使用自动注册）</li>
-                                <li>• 新用户将自动获得 <strong>10,000 USDT</strong> 模拟资金</li>
+                                <li>• 新用户将默认获得 <strong>10,000 USDT</strong> 模拟资金，且可在设置中调整</li>
                             </ul>
                         </section>
 
@@ -902,7 +962,7 @@
                                 <span class="faq-icon" id="faq-icon-6">▼</span>
                             </div>
                             <div class="faq-answer" id="faq-answer-6">
-                                <p>如果您的账户余额归零且无持仓，可以在"设置"页面点击"重置账户"，系统将清空所有交易记录并恢复初始 10,000 USDT 资金。这是模拟平台的优势 —— 可以无限次重置，不断优化交易策略。</p>
+                                <p>如果您的账户余额归零且无持仓，可以在"设置"页面点击"重置账户"，系统将清空所有交易记录并恢复到您当前设置的初始资金（默认 10,000 USDT）。这是模拟平台的优势 —— 可以无限次重置，不断优化交易策略。</p>
                             </div>
                         </div>
 
@@ -950,6 +1010,23 @@
             </div>
         </div>
 
+        <div id="promptRevisionHistoryModal" class="modal-overlay hidden" onclick="if(event.target === this) hidePromptRevisionHistory()">
+            <div class="modal-content w-full max-w-5xl mx-4" onclick="event.stopPropagation()" style="max-height: 90vh; overflow-y: auto;">
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <div>
+                            <h2 class="text-2xl font-bold">🧠 提示词修正历史</h2>
+                            <div id="promptRevisionHistorySubtitle" class="text-sm mt-1" style="color: var(--text-secondary)">跟随当前策略整个生命周期的版本记录</div>
+                        </div>
+                        <button onclick="hidePromptRevisionHistory()" class="text-3xl" style="color: var(--text-secondary)">&times;</button>
+                    </div>
+                    <div id="promptRevisionHistoryContent">
+                        <div class="text-center py-8" style="color: var(--text-secondary)">加载中...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- 悬浮帮助按钮组 -->
         <div class="help-fab">
             <div class="help-btn" onclick="showAboutModal()" title="项目介绍">
@@ -976,8 +1053,8 @@
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
                         <div class="p-4 rounded" style="background-color: var(--bg-secondary)">
                             <div class="text-2xl mb-2">💰</div>
-                            <div class="font-bold mb-1">初始资金</div>
-                            <div style="color: var(--text-secondary)">10,000 USDT</div>
+                            <div class="font-bold mb-1">默认初始资金</div>
+                            <div style="color: var(--text-secondary)">10,000 USDT / 可在设置中调整</div>
                         </div>
                         <div class="p-4 rounded" style="background-color: var(--bg-secondary)">
                             <div class="text-2xl mb-2">🤖</div>
@@ -1021,6 +1098,20 @@
                 <div class="card rounded-lg p-4">
                     <div class="text-sm" style="color: var(--text-secondary)">收益率</div>
                     <div class="text-2xl font-bold mt-1" id="roi">-</div>
+                </div>
+            </div>
+
+            <div class="card rounded-lg p-4 mb-6">
+                <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div>
+                        <div class="text-sm font-semibold" style="color: var(--text-primary)">当前账号交易规则</div>
+                        <div class="text-xs mt-1" style="color: var(--text-secondary)">这些参数跟随当前用户账号保存，会影响手续费、爆仓与重置后的资金</div>
+                    </div>
+                    <div id="accountTradingRules" class="flex flex-wrap gap-2 text-xs">
+                        <span class="badge badge-info">手续费率 -</span>
+                        <span class="badge badge-warning">爆仓阈值 -</span>
+                        <span class="badge badge-success">初始资金 -</span>
+                    </div>
                 </div>
             </div>
 
@@ -1188,4 +1279,5 @@
 
 </body>
 </html>
+
 

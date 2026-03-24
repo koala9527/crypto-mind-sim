@@ -20,10 +20,7 @@ class Settings(BaseSettings):
     PORT: int = 8010
 
     # 交易配置
-    INITIAL_BALANCE: float = 10000.0
-    LIQUIDATION_THRESHOLD: float = 0.9
     PRICE_UPDATE_INTERVAL: int = 60
-    TRADING_FEE_RATE: float = 0.0004
 
     # 交易所配置
     EXCHANGE: str = "binance"

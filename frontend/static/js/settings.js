@@ -6,7 +6,7 @@ function getAIConfig() {
 }
 
 // 同步 AI 配置到服务器
-async function syncAIConfigToServer(apiKey, baseUrl, aiModel) {
+async function syncAIConfigToServer(apiKey, baseUrl, aiModel, tradingFeeRate, liquidationThreshold, initialBalance) {
     const userId = localStorage.getItem('userId');
     if (!userId) {
         throw new Error('请先登录');
@@ -19,7 +19,10 @@ async function syncAIConfigToServer(apiKey, baseUrl, aiModel) {
             body: JSON.stringify({
                 api_key: apiKey,
                 base_url: baseUrl || '',
-                ai_model: aiModel || 'claude-4.5-opus'
+                ai_model: aiModel || 'claude-4.5-opus',
+                trading_fee_rate: tradingFeeRate,
+                liquidation_threshold: liquidationThreshold,
+                initial_balance: initialBalance
             })
         });
 
@@ -36,11 +39,11 @@ async function syncAIConfigToServer(apiKey, baseUrl, aiModel) {
 }
 
 // 保存 AI 配置到当前账号
-async function saveAIConfig(apiKey, baseUrl, aiModel) {
+async function saveAIConfig(apiKey, baseUrl, aiModel, tradingFeeRate, liquidationThreshold, initialBalance) {
     const userId = localStorage.getItem('userId');
     if (userId) {
         try {
-            const result = await syncAIConfigToServer(apiKey, baseUrl, aiModel);
+            const result = await syncAIConfigToServer(apiKey, baseUrl, aiModel, tradingFeeRate, liquidationThreshold, initialBalance);
             showToast(t('configSyncedToServer'), 'success');
             return result;
         } catch (error) {
@@ -72,10 +75,21 @@ async function loadAIConfigFromServer() {
                 apiKey: '',
                 apiKeyMasked: data.api_key_masked || '',
                 baseUrl: data.base_url || '',
-                aiModel: data.ai_model || 'claude-4.5-opus'
+                aiModel: data.ai_model || 'claude-4.5-opus',
+                tradingFeeRate: data.trading_fee_rate ?? 0.0004,
+                liquidationThreshold: data.liquidation_threshold ?? 0.9,
+                initialBalance: data.initial_balance ?? 10000,
             };
         }
-        return null;
+        return {
+            apiKey: '',
+            apiKeyMasked: '',
+            baseUrl: '',
+            aiModel: 'claude-4.5-opus',
+            tradingFeeRate: data.trading_fee_rate ?? 0.0004,
+            liquidationThreshold: data.liquidation_threshold ?? 0.9,
+            initialBalance: data.initial_balance ?? 10000,
+        };
     } catch (error) {
         console.error('从服务器加载配置失败:', error);
         return null;
@@ -97,13 +111,14 @@ async function showSettingsModal() {
     // 先尝试从服务器加载配置
     const config = await loadAIConfigFromServer();
 
-    if (config) {
-        const apiKeyInput = document.getElementById('apiKeyInput');
-        apiKeyInput.value = '';
-        apiKeyInput.placeholder = config.apiKeyMasked || '请输入新的 API Key';
-        document.getElementById('baseUrlInput').value = config.baseUrl || '';
-        document.getElementById('aiModelInput').value = config.aiModel || 'claude-4.5-opus';
-    }
+    const apiKeyInput = document.getElementById('apiKeyInput');
+    apiKeyInput.value = '';
+    apiKeyInput.placeholder = config?.apiKeyMasked || '请输入新的 API Key';
+    document.getElementById('baseUrlInput').value = config?.baseUrl || '';
+    document.getElementById('aiModelInput').value = config?.aiModel || 'claude-4.5-opus';
+    document.getElementById('tradingFeeRateInput').value = config?.tradingFeeRate ?? 0.0004;
+    document.getElementById('liquidationThresholdInput').value = config?.liquidationThreshold ?? 0.9;
+    document.getElementById('initialBalanceInput').value = config?.initialBalance ?? 10000;
 
     modal.classList.remove('hidden');
 }
@@ -122,16 +137,30 @@ async function saveSettings() {
     const apiKey = apiKeyInput.value.trim();
     const baseUrl = document.getElementById('baseUrlInput').value.trim() || '';
     const aiModel = document.getElementById('aiModelInput').value.trim() || 'claude-4.5-opus';
-    const hasExistingApiKey = Boolean(apiKeyInput.placeholder && apiKeyInput.placeholder !== '请输入新的 API Key');
+    const tradingFeeRate = parseFloat(document.getElementById('tradingFeeRateInput').value);
+    const liquidationThreshold = parseFloat(document.getElementById('liquidationThresholdInput').value);
+    const initialBalance = parseFloat(document.getElementById('initialBalanceInput').value);
+    if (!(tradingFeeRate >= 0 && tradingFeeRate <= 0.1)) {
+        showToast('手续费率需在 0 - 0.1 之间', 'warning');
+        return;
+    }
 
-    if (!apiKey && !hasExistingApiKey) {
-        showToast(t('apiKeyRequired'), 'warning');
+    if (!(liquidationThreshold > 0 && liquidationThreshold <= 1)) {
+        showToast('爆仓阈值需在 0 - 1 之间', 'warning');
+        return;
+    }
+
+    if (!(initialBalance > 0)) {
+        showToast('初始资金必须大于 0', 'warning');
         return;
     }
 
     try {
-        await saveAIConfig(apiKey, baseUrl, aiModel);
+        await saveAIConfig(apiKey, baseUrl, aiModel, tradingFeeRate, liquidationThreshold, initialBalance);
         hideSettingsModal();
+        if (typeof updateData === 'function') {
+            await updateData();
+        }
     } catch (error) {
         console.error('保存配置失败:', error);
         showToast(t('saveConfigFailed') + ': ' + error.message, 'error');
@@ -258,3 +287,4 @@ async function resetAllData() {
         showToast(t('resetFailed') + ': ' + error.message, 'error');
     }
 }
+

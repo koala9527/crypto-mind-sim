@@ -35,10 +35,10 @@ cp config/.env.example .env
 | `DATABASE_URL` | `sqlite:///./neotrade.db` | 本地 SQLite 数据库 |
 | `HOST` | `127.0.0.1` | 监听地址 |
 | `PORT` | `8010` | 监听端口 |
-| `INITIAL_BALANCE` | `10000.0` | 初始模拟资金 |
-| `LIQUIDATION_THRESHOLD` | `0.9` | 爆仓阈值 |
+| `INITIAL_BALANCE` | 已废弃 | 初始模拟资金已改为用户级设置 |
+| `LIQUIDATION_THRESHOLD` | 已废弃 | 爆仓阈值已改为用户级设置 |
 | `PRICE_UPDATE_INTERVAL` | `60` | 价格更新间隔（秒） |
-| `TRADING_FEE_RATE` | `0.0004` | 手续费率 |
+| `TRADING_FEE_RATE` | 已废弃 | 手续费率已改为用户级设置 |
 | `EXCHANGE` | `binance` | 行情来源交易所 |
 | `TRADING_PAIR` | `BTC/USDT` | 默认交易对 |
 | `LEADERBOARD_TOP_N` | `10` | 排行榜显示数量 |

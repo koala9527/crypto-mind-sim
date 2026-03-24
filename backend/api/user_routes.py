@@ -8,6 +8,9 @@ from datetime import timedelta
 
 from backend.core.database import get_db
 from backend.core.models import (
+    DEFAULT_INITIAL_BALANCE,
+    DEFAULT_LIQUIDATION_THRESHOLD,
+    DEFAULT_TRADING_FEE_RATE,
     User,
     Position,
     Trade,
@@ -15,9 +18,9 @@ from backend.core.models import (
     AIConversation,
     PromptConfig,
     AssetHistory,
+    PromptRevisionHistory,
     get_local_time,
 )
-from backend.core.config import settings
 from backend.core.security import require_same_user
 import logging
 
@@ -31,6 +34,9 @@ class AIConfigUpdate(BaseModel):
     api_key: Optional[str] = Field(None, description="API Key")
     base_url: Optional[str] = Field(None, description="Base URL")
     ai_model: Optional[str] = Field("claude-4.5-opus", description="AI 模型名称")
+    trading_fee_rate: float = Field(default=DEFAULT_TRADING_FEE_RATE, ge=0.0, le=0.1)
+    liquidation_threshold: float = Field(default=DEFAULT_LIQUIDATION_THRESHOLD, gt=0.0, le=1.0)
+    initial_balance: float = Field(default=DEFAULT_INITIAL_BALANCE, gt=0.0)
 
 
 class AIConfigResponse(BaseModel):
@@ -39,6 +45,9 @@ class AIConfigResponse(BaseModel):
     api_key_masked: Optional[str] = None
     base_url: Optional[str] = None
     ai_model: Optional[str] = None
+    trading_fee_rate: float = DEFAULT_TRADING_FEE_RATE
+    liquidation_threshold: float = DEFAULT_LIQUIDATION_THRESHOLD
+    initial_balance: float = DEFAULT_INITIAL_BALANCE
 
 
 def mask_api_key(api_key: Optional[str]) -> Optional[str]:
@@ -64,14 +73,15 @@ async def update_ai_config(
     """
     user = current_user
 
-    # 更新 AI 配置；未传 api_key 时保留原值
+    # 更新 AI 配置；未传 api_key 时保留原值，允许仅更新交易参数
     if config.api_key:
         user.ai_api_key = config.api_key
-    elif not user.ai_api_key:
-        raise HTTPException(status_code=400, detail="请先填写 API Key")
 
     user.ai_base_url = config.base_url or ""
     user.ai_model = config.ai_model or "claude-4.5-opus"
+    user.trading_fee_rate = config.trading_fee_rate
+    user.liquidation_threshold = config.liquidation_threshold
+    user.initial_balance = config.initial_balance
 
     db.commit()
     db.refresh(user)
@@ -84,6 +94,9 @@ async def update_ai_config(
         api_key_masked=mask_api_key(user.ai_api_key),
         base_url=user.ai_base_url,
         ai_model=user.ai_model or "claude-4.5-opus",
+        trading_fee_rate=user.trading_fee_rate or DEFAULT_TRADING_FEE_RATE,
+        liquidation_threshold=user.liquidation_threshold or DEFAULT_LIQUIDATION_THRESHOLD,
+        initial_balance=user.initial_balance or DEFAULT_INITIAL_BALANCE,
     )
 
 
@@ -107,13 +120,19 @@ async def get_ai_config(
             "configured": True,
             "api_key_masked": mask_api_key(user.ai_api_key),
             "base_url": user.ai_base_url or "",
-            "ai_model": user.ai_model or "claude-4.5-opus"
+            "ai_model": user.ai_model or "claude-4.5-opus",
+            "trading_fee_rate": user.trading_fee_rate or DEFAULT_TRADING_FEE_RATE,
+            "liquidation_threshold": user.liquidation_threshold or DEFAULT_LIQUIDATION_THRESHOLD,
+            "initial_balance": user.initial_balance or DEFAULT_INITIAL_BALANCE,
         }
     else:
         return {
             "configured": False,
             "api_key_masked": None,
-            "base_url": None
+            "base_url": None,
+            "trading_fee_rate": user.trading_fee_rate or DEFAULT_TRADING_FEE_RATE,
+            "liquidation_threshold": user.liquidation_threshold or DEFAULT_LIQUIDATION_THRESHOLD,
+            "initial_balance": user.initial_balance or DEFAULT_INITIAL_BALANCE,
         }
 
 
@@ -164,19 +183,20 @@ async def reset_user_data(
         db.query(AIDecisionLog).filter(AIDecisionLog.user_id == user_id).delete(synchronize_session=False)
         db.query(AIConversation).filter(AIConversation.user_id == user_id).delete(synchronize_session=False)
         db.query(PromptConfig).filter(PromptConfig.user_id == user_id).delete(synchronize_session=False)
+        db.query(PromptRevisionHistory).filter(PromptRevisionHistory.user_id == user_id).delete(synchronize_session=False)
         db.query(AssetHistory).filter(AssetHistory.user_id == user_id).delete(synchronize_session=False)
 
         # 重置余额
-        user.balance = settings.INITIAL_BALANCE
+        user.balance = user.initial_balance
         user.updated_at = get_local_time()
 
         db.commit()
 
-        logger.info(f"用户数据已重置: {user.username} (ID: {user_id}), 余额恢复为 {settings.INITIAL_BALANCE}")
+        logger.info(f"用户数据已重置: {user.username} (ID: {user_id}), 余额恢复为 {user.initial_balance}")
 
         return {
             "message": "数据重置成功",
-            "balance": settings.INITIAL_BALANCE,
+            "balance": user.initial_balance,
             "reset_at": get_local_time().isoformat()
         }
     except Exception as e:
